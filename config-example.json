@@ -1,0 +1,14 @@
+{
+    "slack_bot_token": "xoxb-...",
+    "trivia_channel": "C0....",
+    "admin": "UE......",
+    "database": "trivia.db",
+    "bot": {
+        "username": "Trivia Bot Beta",
+        "icon_emoji": ":panda_face:"
+    },
+    "matching": {
+        "fuzzy_threshold": 75,
+        "character_count": 5
+    }
+}

@@ -3,14 +3,14 @@ import requests
 import html
 import sqlite3
 from time import sleep
-REG_CATEGORIES = r'"category_name">(.*?)<\/td>[\s\S]*?"category_comments">(.*?)<\/td>'
+REG_CATEGORIES = r'<table>[\S\s]*?<td class="(category_name|category_comments)">(.*?)<\/td>[\S\s]*?<td class="(category_name|category_comments)">(.*?)<\/td>[\S\s]*?<\/table>'
 REG_QUESTIONS = r'(?:correct_response&quot;&gt;(.*?)&lt;\/em&gt;[\s\S]*?class="clue_text">(.*?)<\/td>|<td class="clue">\s*?<\/td>)'
 REG_EPS = r'\"(https:\/\/www\.j-archive\.com\/showgame\.php\?game_id=\d+)\"'
 REG_CAT_COMMENT = r'\(.+?:\s+(.*)\)'
 REG_HTML_TAGS = r'<[^>]+>'
 REG_SHOW_NUM = r'<div id=\"game_title\"><h1>Show #(\d+).*?(\d{4})<\/h1>'
 
-DB_PATH = 'j_questions.db'
+DB_PATH = 'trivia.db'
 
 sample_page = 'https://www.j-archive.com/showgame.php?game_id=7094'
 
@@ -39,16 +39,27 @@ def parse_page(url):
     
     cur.execute('''SELECT DISTINCT show_number FROM category WHERE show_number = ?''', (show_num, ))
     if len(cur.fetchall()) > 0:
+        print('already have')
         return
 
-    matches = re.findall(REG_CATEGORIES, page_content)[:-1]
+    matches = re.findall(REG_CATEGORIES, page_content)[:12]
     if len(matches) != 12:
         con.rollback()
         raise IndexError('Wrong number of categories found! ' + str(len(matches)))
 
+    # sometimes name and category are reversed
     for match in matches:
-        category = html.unescape(match[0])
-        comment = html.unescape(match[1])
+        if match[0] == 'category_name':
+            category_name_index = 1
+            category_comment_index = 3
+        else:
+            category_name_index = 3
+            category_comment_index = 1
+
+        category = clean_string(match[category_name_index])
+        comment = clean_string(match[category_comment_index])
+
+        # get rid of the (so-and-so: ) part of the comment
         com_match = re.match(REG_CAT_COMMENT, comment)
         if com_match:
             comment = com_match[1]
@@ -74,25 +85,33 @@ def parse_page(url):
         non_text = 0
         if 'a href' in question.lower():
             non_text = 1
-        question = re.sub(REG_HTML_TAGS, '', html.unescape(question)).replace('\\', '')
-        answer = re.sub(REG_HTML_TAGS, '', html.unescape(match[0])).replace('\\', '')
+        question = clean_string(question)
+        answer = clean_string(match[0])
         cur.execute('''INSERT INTO question (category_id, value, question, answer, non_text) VALUES (?, ?, ?, ?, ?)''', 
         (cat, score, question, answer, non_text))
 
     con.commit()
     con.close()
 
+def clean_string(s):
+    return re.sub(REG_HTML_TAGS, '', html.unescape(s)).replace('\\', '')
+
 def scan_season(url):
+    print(url)
     page_content = requests.get(url).content.decode('utf-8')
     matches = re.finditer(REG_EPS, page_content)
 
     for match in matches:
         ep_url = match[1]
         print(ep_url)
-        parse_page(ep_url)
-        sleep(4)
+        try:
+            parse_page(ep_url)
+        except Exception:
+            print('skip')
+        sleep(.5)
 
 
 build_tables()
-#parse_page('https://www.j-archive.com/showgame.php?game_id=7066')
-scan_season('https://www.j-archive.com/showseason.php?season=37')
+#parse_page('https://www.j-archive.com/showgame.php?game_id=6955')
+for i in range(16, 11, -1):
+    scan_season('https://www.j-archive.com/showseason.php?season={}'.format(i))

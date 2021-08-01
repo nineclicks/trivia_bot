@@ -64,7 +64,6 @@ CREATE TABLE IF NOT EXISTS player
   (
      id          INTEGER NOT NULL PRIMARY KEY,
      uid         TEXT,
-     name        TEXT,
      score       INTEGER,
      correct     INTEGER,
      incorrect   INTEGER,
@@ -102,4 +101,67 @@ UPDATE attempt
 SET attempts = :attempts,
     players = :players,
     correct_player_id = :player_id
-WHERE id = :id
+WHERE time = (SELECT MAX(time) FROM attempt)
+
+--name: get_last_question
+SELECT q.id,
+       c.title as category,
+       c.comment as comment,
+       c.show_year as year,
+       q.value as value,
+       q.question,
+       q.answer
+FROM attempt a
+       LEFT JOIN question q
+              on a.question_id = q.id
+       LEFT JOIN category c
+              ON q.category_id = c.id
+WHERE  a.time = (SELECT MAX(time) FROM attempt)
+LIMIT  1
+
+--name: get_player_score
+SELECT score FROM player
+WHERE uid = :uid
+  AND platform = :platform
+
+--name: get_player_rank
+SELECT rank FROM (SELECT uid, RANK () OVER (ORDER BY score DESC ) rank FROM player WHERE platform = :platform)
+WHERE uid = :uid
+
+--name: add_player
+INSERT INTO player
+  (
+    uid,
+    score,
+    correct,
+    incorrect,
+    platform
+  )
+SELECT
+  :uid,
+  0,
+  0,
+  0,
+  :platform
+WHERE NOT EXISTS (SELECT 1 FROM player WHERE uid = :uid)
+
+--name: answer_right
+UPDATE player
+SET score = (SELECT score + :value FROM player WHERE uid = :uid and platform = :platform)
+  , correct = (SELECT correct + 1 FROM player WHERE uid = :uid and platform = :platform)
+WHERE uid = :uid and platform = :platform
+
+--name: answer_wrong
+UPDATE player
+SET incorrect = (SELECT incorrect + 1 FROM player WHERE uid = :uid and platform = :platform)
+WHERE uid = :uid and platform = :platform
+
+--name: get_scores
+SELECT
+  uid,
+  score,
+  correct,
+  incorrect
+FROM player
+WHERE platform = ?
+ORDER BY score DESC
