@@ -1,4 +1,4 @@
-python-Levenshtein >= 0.12.2
 slack-sdk          >= 3.8.0
 Unidecode          >= 1.1.1
 num2words          >= 0.5.10
+APScheduler        >= 3.7.0
