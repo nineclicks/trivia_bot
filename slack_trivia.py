@@ -166,8 +166,8 @@ class SlackTrivia:
 
             lines.append(line_template.format(**score))
 
-        #if len(lines) == 1:
-        #    return
+        if len(lines) == 1:
+            return
         title = 'Scoreboard for {}'.format(self.ftime(yesterday_start))
         title2 = '=' * len(title)
         self.post_message('```{}\n{}\n{}```'.format(title, title2,'\n'.join(lines)))
