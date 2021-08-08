@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS attempt
      id                INTEGER NOT NULL PRIMARY KEY,
      question_id       INTEGER,
      time              INTEGER,
+     complete_time     INTEGER,
      attempts          INTEGER,
      players           INTEGER,
      correct_player_id INTEGER
@@ -100,7 +101,8 @@ WHERE uid = :uid
 UPDATE attempt
 SET attempts = :attempts,
     players = :players,
-    correct_player_id = :player_id
+    correct_player_id = :player_id,
+    complete_time = :complete_time
 WHERE time = (SELECT MAX(time) FROM attempt)
 
 --name: get_last_question
@@ -165,3 +167,33 @@ SELECT
 FROM player
 WHERE platform = ?
 ORDER BY score DESC
+
+--name: get_timeframe_scores
+SELECT
+   rank, uid, score, correct
+FROM
+   (
+      SELECT
+         RANK () OVER (
+      ORDER BY
+         SUM(q.Value) DESC) rank,
+         p.uid uid,
+         SUM(q.value) score,
+         COUNT(q.value) correct 
+      FROM
+         player p 
+         LEFT JOIN
+            attempt a 
+            ON p.id = a.correct_player_id 
+         LEFT JOIN
+            question q 
+            ON a.question_id = q.id 
+      WHERE
+         a.complete_time >= :start_time
+         AND (a.complete_time < :end_time OR :end_time IS NULL)
+      GROUP BY
+         p.uid
+   )
+WHERE
+   uid = :uid
+   OR :uid IS NULL;

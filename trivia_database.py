@@ -4,7 +4,8 @@ import logging
 from time import time
 from pathlib import Path
 from threading import Lock
-from fuzzywuzzy import fuzz
+import unidecode
+from num2words import num2words
 
 REG_QUERIES = r'(?i)^\s*--\s*name\s*:\s*(\S+)\s*\n([\S\s]+?)(?=--name|\Z)'
 QUERIES_FILE = 'queries.sql'
@@ -27,17 +28,44 @@ class TriviaDatabase:
         return self._db.select_one('get_last_question', as_map=True)
 
     def check_answer(self, answer):
-        #ratio = fuzz.token_sort_ratio(answer, self.current_question['answer'])
-        ratio = fuzz.ratio(answer, self.current_question['answer'])
+        correct_answer = self.current_question['answer']
+        return self.do_check_answer(answer, correct_answer, self._matching['character_count'])
 
-        if (len(answer) >= self._matching['character_count'] and
-            answer.strip().lower() in self.current_question['answer'].lower()):
-            logging.info('Correct answer ' + str(self._matching['character_count']) + ' consecutive characters')
-            return True
+    @staticmethod
+    def answer_variants(answer):
+        filters = [
+            lambda x: [unidecode.unidecode(x)] if unidecode.unidecode(x) != x else [],
+            lambda x: [re.sub(r'[0-9]+(?:[\.,][0-9]+)?', lambda y: num2words(y.group(0)), x)],
+            lambda x: [x.replace(a, b) for a,b in [['&', 'and'],['%', 'percent']] if a in x],
+            lambda x: [x[len(a):] for a in ['a ', 'an ', 'the '] if x.startswith(a)],
+            lambda x: [''.join([a for a in x if a not in ' '])],
+            lambda x: [''.join([a for a in x if a not in '\'().,"-'])],
+        ]
 
-        elif ratio >= self._matching['fuzzy_threshold']:
-            logging.info('Correct answer ' + str(ratio) + r'% fuzzy match')
-            return True
+        possible_answers = [answer.lower()]
+        for filter in filters:
+            for possible_answer in possible_answers:
+                try:
+                    possible_answers = list(set([*possible_answers, *filter(possible_answer)]))
+                except Exception as ex:
+                    logging.exception(ex)
+
+        return possible_answers
+
+    @staticmethod
+    def do_check_answer(answer, correct_answer, match_character_count):
+        correct_answer_variations = TriviaDatabase.answer_variants(correct_answer)
+        given_answer_variations = TriviaDatabase.answer_variants(answer)
+
+        print(correct_answer_variations)
+        print(given_answer_variations)
+
+        for correct_answer_variation in correct_answer_variations:
+            for given_answer_variation in given_answer_variations:
+
+                if (len(given_answer_variation.strip(' ')) >= min(match_character_count, len(correct_answer_variation)) and
+                    given_answer_variation.strip() in correct_answer_variation):
+                    return True
 
         return False
 
@@ -88,6 +116,16 @@ class TriviaDatabase:
             return 999
         return row[0]
 
+    def get_player_stats_timeframe(self, uid, start_time, end_time=None):
+        rows = self._db.select_iter('get_timeframe_scores', {
+            'uid': uid,
+            'start_time': start_time,
+            'end_time': end_time,
+        }, as_map=True)
+        
+        for row in rows:
+            yield row
+
     def get_scores(self):
         rows = self._db.select_iter('get_scores', (self._platform,), as_map=True)
         scores = []
@@ -101,6 +139,7 @@ class TriviaDatabase:
             'attempts': attempts,
             'players': players,
             'player_id': None,
+            'complete_time': int(time()),
         }
         if correct_uid is not None:
             player_id = self._db.select_one(
