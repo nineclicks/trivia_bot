@@ -108,7 +108,7 @@ class SlackTrivia:
         question = self._trivia.make_question_attempt()
         question['comment'] = '_{}_'.format(question['comment']) if question['comment'] else ''
 
-        q_template = '({year}) *{category}* {comment} for *{value}*\n>{question}\n{answer}'
+        q_template = '({year}) *{category}* {comment} for *{value}*\n>{question}'
         if message:
             q_template = message + '\n' + q_template
 
