@@ -1,5 +1,6 @@
 import os
 import json
+import html
 import signal
 import logging
 from slack_sdk.rtm_v2 import RTMClient
@@ -82,7 +83,7 @@ class SlackTrivia:
                         return
 
                     user: str = event['user']
-                    text: str = event['text']
+                    text: str = html.unescape(event['text'])
                     ts = event['ts']
 
                     if text.strip().startswith('!'):
