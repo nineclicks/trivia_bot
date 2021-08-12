@@ -3,24 +3,25 @@ import json
 import html
 import signal
 import logging
+import datetime
+import time
 from slack_sdk.rtm_v2 import RTMClient
 from slack_sdk.errors import SlackApiError
 from trivia_database import TriviaDatabase
 from threading import Lock
-from datetime import datetime, time, timedelta
-from time import localtime, strftime
 from apscheduler.schedulers.background import BackgroundScheduler
+from tabulate import tabulate
 
 
 class SlackTrivia:
 
     @staticmethod
     def timestamp_midnight(days_ago=0):
-        return int(datetime.combine(datetime.today() - timedelta(days=days_ago), time.min).timestamp())
+        return int(datetime.datetime.combine(datetime.datetime.today() - datetime.timedelta(days=days_ago), datetime.time.min).timestamp())
 
     @staticmethod
     def ftime(timestamp):
-        return strftime('%A %B %d %Y',localtime(int(timestamp)))
+        return time.strftime('%A %B %d %Y',time.localtime(int(timestamp)))
 
     def __init__(self, config_filename):
         logging.info('Starting SlackTrivia')
@@ -30,6 +31,7 @@ class SlackTrivia:
         self._client = RTMClient(token=self._config['slack_bot_token'])
         self._setup_handle_message()
         self._setup_hello()
+        self._starttime = time.time()
         self._trivia = TriviaDatabase(
             self._config['database'],
             self._team_id(),
@@ -115,63 +117,77 @@ class SlackTrivia:
 
         self.post_message(q_template.format(**question))
 
+    def commands(self):
+        return (
+            (['exit'], None, self.exit),
+            (['uptime'], None, self.uptime),
+            (['new', 'trivia new'], 'Skip to the next question', lambda *_, **__: self.update_attempt(None, None)),
+            (['alltime', 'score', 'scores'], 'Scores for all time', self.show_alltime_scores),
+            (['yesterday'], 'Scores for yesterday', self.show_yesterday_scores),
+            (['today'], 'Scores for today', self.show_today_scores),
+            (['help'], 'Show this help info', self.help),
+        )
 
-    def handle_command(self, user, text, ts):
-        if text == 'exit' and user == self._config['admin']:
+    def exit(self, *_, **kwargs):
+        if kwargs.get('user') == self._config['admin']:
             ts = self.post_message(text='ok bye')['ts']
             self.do_exit()
-        elif text in ['trivia new', 'new']:
-            self.update_attempt(None, None)
-        elif text in ['score', 'scores', 'leaderboard']:
-            self.show_scores()
-        elif text in ['yesterday']:
-            self.show_yesterday_scores()
 
-    def show_scores(self):
-        header = {'rank': 'Rank', 'name': 'Name', 'score': 'Score', 'correct': 'Right', 'incorrect': 'Wrong', 'pct': ''}
-        line_template = '{rank:<5} {name:<30} {score:<13,} {correct:<6} {incorrect:<6} {pct:.1f}%'
+    def help(self, *_, **__):
+        template = '!{:<20}{}'
+        commands = '\n'.join([template.format(x[0][0], x[1]) for x in self.commands() if x[1] is not None])
+        self.post_message('```{}```'.format(commands))
 
-        # remove comma from template since we can't comma separate the word "Score"
-        lines = [line_template.replace(',','').replace(':.1f','').format(**header)]
-        scores = self._trivia.get_scores()
-        for i, score in enumerate(scores):
-            score['pct'] = score['correct'] / (score['correct'] + score['incorrect']) * 100
-            try:
-                # Get the current display name from slack, limit to 20 chars
-                score['name'] = self.get_username(score['uid'])[:28]
-            except SlackApiError as ex:
-                # This uid no longer exists on the slack team
-                score['name'] = '(user gone)'
+    def handle_command(self, user, text, ts):
+        for command in self.commands():
+            if text in command[0]:
+                command[2](user=user, text=text, ts=ts)
+                break
 
-            lines.append(line_template.format(rank=i+1, **score))
+    @staticmethod
+    def format_scoreboard(scores):
+        cols = [
+            ('rank', lambda x: x),
+            ('name', lambda x: x),
+            ('score', lambda x: '{:,}'.format(x)),
+            ('correct', lambda x: x),
+        ]
 
-        self.post_message('```{}```'.format('\n'.join(lines)))
+        return tabulate([{col: fn(x[col]) for col, fn in cols} for x in scores], headers='keys')
 
-    def show_yesterday_scores(self):
-        header = {'rank': 'Rank', 'name': 'Name', 'score': 'Score', 'correct': 'Correct Answers'}
-        line_template = '{rank:<5} {name:<30} {score:<13,} {correct:<16}'
+    def uptime(self, *_, **__):
+        uptime = int(time.time()) - int(self._starttime)
+        self.post_message('{} seconds'.format(uptime))
 
-        # remove comma from template since we can't comma separate the word "Score"
-        lines = [line_template.replace(',','').format(**header)]
-        #scores = self._trivia.get_scores()
+    def show_today_scores(self, *_, **__):
+        today_start = self.timestamp_midnight()
+        self.show_scores(today_start, None)
+
+    def show_yesterday_scores(self, *_, **__):
         yesterday_start = self.timestamp_midnight(1)
         yesterday_end = self.timestamp_midnight()
-        scores = self._trivia.get_player_stats_timeframe(None, yesterday_start, yesterday_end)
+        self.show_scores(yesterday_start, yesterday_end)
+
+    def show_alltime_scores(self, *_, **__):
+        start = 0
+        self.show_scores(start, None, 'Alltime Scores')
+
+    def show_scores(self, start, end, title=None):
+        if title is None:
+            title = 'Scoreboard for {}'.format(self.ftime(start))
+
+        scores = list(self._trivia.get_player_stats_timeframe(None, start, end))
         for score in scores:
             try:
-                # Get the current display name from slack, limit to 20 chars
-                score['name'] = self.get_username(score['uid'])[:28]
+                # Get the current display name from slack, limit to 32 chars
+                score['name'] = self.get_username(score['uid'])[:32]
             except SlackApiError as ex:
                 # This uid no longer exists on the slack team
                 score['name'] = '(user gone)'
 
-            lines.append(line_template.format(**score))
-
-        if len(lines) == 1:
-            return
-        title = 'Scoreboard for {}'.format(self.ftime(yesterday_start))
         title2 = '=' * len(title)
-        self.post_message('```{}\n{}\n{}```'.format(title, title2,'\n'.join(lines)))
+        scoreboard = self.format_scoreboard(scores)
+        self.post_message('```{}\n{}\n{}```'.format(title, title2,scoreboard))
 
 
     def update_attempt(self, winning_user, ts):

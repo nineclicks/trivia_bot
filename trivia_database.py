@@ -98,24 +98,6 @@ class TriviaDatabase:
         )
         return self.current_question
 
-    def get_player_score(self, uid):
-        row = self._db.select_one('get_player_score', {
-            'uid': uid,
-            'platform': self._platform,
-        })
-        if row is None:
-            return 0
-        return row[0]
-
-    def get_player_rank(self, uid):
-        row = self._db.select_one('get_player_rank', {
-            'uid': uid,
-            'platform': self._platform,
-        })
-        if row is None:
-            return 999
-        return row[0]
-
     def get_player_stats_timeframe(self, uid, start_time, end_time=None):
         rows = self._db.select_iter('get_timeframe_scores', {
             'uid': uid,
