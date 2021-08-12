@@ -8,7 +8,10 @@
         "icon_emoji": ":panda_face:"
     },
     "matching": {
-        "fuzzy_threshold": 75,
         "character_count": 5
+    },
+    "scoreboard_time": {
+        "hour": 7,
+        "minute": 0
     }
 }
