@@ -41,7 +41,12 @@ class SlackTrivia:
         self._sched = BackgroundScheduler()
         self._sched.start()  
 
-        self._job = self._sched.add_job(self.show_yesterday_scores, 'cron', **self._config['scoreboard_time'], replace_existing=True)
+        self._job = self._sched.add_job(
+            self.show_yesterday_scores,
+            'cron',
+            **self._config['scoreboard_time'],
+            kwargs={'suppress_no_scores': True},
+            replace_existing=True)
 
         self._client.start()
 
@@ -53,6 +58,9 @@ class SlackTrivia:
         return self._client.web_client.team_info()['team']['id']
 
     def post_message(self, text, **kwargs):
+        # Delete any None value args so they don't overwrite on "update()"
+        kwargs = {k:v for k,v in kwargs.items() if v is not None}
+
         message_args = {
             'channel': self._config['trivia_channel'],
             'text': text,
@@ -74,22 +82,24 @@ class SlackTrivia:
     def _setup_handle_message(self):
         @self._client.on('message')
         def handle_message(client: RTMClient, event: dict):
+            print(event)
             try:
                 with self._lock:
                     if (
                         event['type'] != 'message'
                         or 'subtype' in event
                         or 'thread_ts' in event
-                        or event['channel'] != self._config['trivia_channel']
+                        or (event['channel'] != self._config['trivia_channel'] and event['user'] != self._config['admin'])
                         ):
                         return
 
                     user: str = event['user']
                     text: str = html.unescape(event['text'])
+                    channel: str = event['channel']
                     ts = event['ts']
 
                     if text.strip().startswith('!'):
-                        self.handle_command(user, text.strip().lower()[1:], ts)
+                        self.handle_command(user, text.strip().lower()[1:], ts, channel)
                     else:
                         self.handle_answer(user, text, ts)
             except Exception as ex:
@@ -130,18 +140,18 @@ class SlackTrivia:
 
     def exit(self, *_, **kwargs):
         if kwargs.get('user') == self._config['admin']:
-            ts = self.post_message(text='ok bye')['ts']
+            ts = self.post_message(text='ok bye', channel=kwargs['channel'])['ts']
             self.do_exit()
 
-    def help(self, *_, **__):
+    def help(self, *_, **kwargs):
         template = '!{:<20}{}'
         commands = '\n'.join([template.format(x[0][0], x[1]) for x in self.commands() if x[1] is not None])
-        self.post_message('```{}```'.format(commands))
+        self.post_message('```{}```'.format(commands), channel=kwargs.get('channel'))
 
-    def handle_command(self, user, text, ts):
+    def handle_command(self, user, text, ts, channel):
         for command in self.commands():
             if text in command[0]:
-                command[2](user=user, text=text, ts=ts)
+                command[2](user=user, text=text, ts=ts, channel=channel)
                 break
 
     @staticmethod
@@ -155,28 +165,33 @@ class SlackTrivia:
 
         return tabulate([{col: fn(x[col]) for col, fn in cols} for x in scores], headers='keys')
 
-    def uptime(self, *_, **__):
+    def uptime(self, *_, **kwargs):
         uptime = int(time.time()) - int(self._starttime)
-        self.post_message('{} seconds'.format(uptime))
+        uptime_str = "{:0>8}".format(str(datetime.timedelta(seconds=uptime)))
+        self.post_message(uptime_str, channel=kwargs['channel'])
 
-    def show_today_scores(self, *_, **__):
+    def show_today_scores(self, *_, **kwargs):
         today_start = self.timestamp_midnight()
-        self.show_scores(today_start, None)
+        self.show_scores(today_start, None, channel=kwargs.get('channel'))
 
-    def show_yesterday_scores(self, *_, **__):
+    def show_yesterday_scores(self, *_, suppress_no_scores=False, **kwargs):
         yesterday_start = self.timestamp_midnight(1)
         yesterday_end = self.timestamp_midnight()
-        self.show_scores(yesterday_start, yesterday_end)
+        self.show_scores(yesterday_start, yesterday_end, suppress_no_scores=suppress_no_scores, channel=kwargs.get('channel'))
 
-    def show_alltime_scores(self, *_, **__):
+    def show_alltime_scores(self, *_, **kwargs):
         start = 0
-        self.show_scores(start, None, 'Alltime Scores')
+        self.show_scores(start, None, 'Alltime Scores', channel=kwargs.get('channel'))
 
-    def show_scores(self, start, end, title=None):
+    def show_scores(self, start, end, title=None, suppress_no_scores=False, channel=None):
         if title is None:
             title = 'Scoreboard for {}'.format(self.ftime(start))
 
         scores = list(self._trivia.get_player_stats_timeframe(None, start, end))
+
+        if suppress_no_scores and len(scores) == 0:
+            return
+
         for score in scores:
             try:
                 # Get the current display name from slack, limit to 32 chars
@@ -187,7 +202,7 @@ class SlackTrivia:
 
         title2 = '=' * len(title)
         scoreboard = self.format_scoreboard(scores)
-        self.post_message('```{}\n{}\n{}```'.format(title, title2,scoreboard))
+        self.post_message('```{}\n{}\n{}```'.format(title, title2,scoreboard), channel=channel)
 
 
     def update_attempt(self, winning_user, ts):
