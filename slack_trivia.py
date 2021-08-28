@@ -12,6 +12,7 @@ from threading import Lock
 from apscheduler.schedulers.background import BackgroundScheduler
 from tabulate import tabulate
 
+NAME_CACHE_SECONDS = 12 * 60 * 60
 
 class SlackTrivia:
 
@@ -37,6 +38,8 @@ class SlackTrivia:
             self._team_id(),
             self._config['matching']
         )
+        
+        self._names_cache = {}
 
         self._sched = BackgroundScheduler()
         self._sched.start()  
@@ -116,15 +119,22 @@ class SlackTrivia:
                 logging.exception(ex)
 
     def get_username(self, uid):
-        name_priority = [
-            'display_name_normalized',
-            'real_name_normalized',
-        ]
-        user = self._client.web_client.users_info(user=uid)['user']['profile']
-        for name_type in name_priority:
-            if name_type in user and user[name_type] is not None and user[name_type] != '':
-                return user[name_type]
-        return '???'
+        name, name_time = self._names_cache.get(uid, ('???', 0))
+
+        if time.time() > name_time + NAME_CACHE_SECONDS:
+            name_priority = [
+                'display_name_normalized',
+                'real_name_normalized',
+            ]
+            logging.info('Getting username for uid: ' + uid)
+            user = self._client.web_client.users_info(user=uid)['user']['profile']
+            for name_type in name_priority:
+                if name_type in user and user[name_type] is not None and user[name_type] != '':
+                    name = user[name_type]
+                    self._names_cache[uid] = (name, time.time())
+                    break
+
+        return name
 
     def new_question(self, message = None):
         self._attempts = []
