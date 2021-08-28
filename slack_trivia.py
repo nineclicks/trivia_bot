@@ -5,7 +5,6 @@ import signal
 import logging
 import datetime
 import time
-from time import sleep
 from slack_sdk.rtm_v2 import RTMClient
 from slack_sdk.errors import SlackApiError
 from trivia_database import TriviaDatabase
@@ -78,7 +77,7 @@ class SlackTrivia:
             except Exception as ex:
                 logging.exception(ex)
                 logging.error('Slack send error. Try # ' + str(tries))
-                sleep(1)
+                time.sleep(1)
 
     @staticmethod
     def do_exit():
