@@ -57,8 +57,12 @@ class TriviaDatabase:
         correct_answer_variations = TriviaDatabase.answer_variants(correct_answer)
         given_answer_variations = TriviaDatabase.answer_variants(answer)
 
-        print(correct_answer_variations)
-        print(given_answer_variations)
+        logging.debug(
+            'Correct answers:\n'
+            + str(correct_answer_variations)
+            + '\nGiven answers:\n'
+            + str(given_answer_variations)
+        )
 
         for correct_answer_variation in correct_answer_variations:
             for given_answer_variation in given_answer_variations:

@@ -95,7 +95,6 @@ class SlackTrivia:
     def _setup_handle_message(self):
         @self._client.on('message')
         def handle_message(client: RTMClient, event: dict):
-            print(event)
             try:
                 with self._lock:
                     if (
