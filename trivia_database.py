@@ -1,6 +1,7 @@
 import re
 import sqlite3
 import logging
+from random import choice
 from time import time
 from pathlib import Path
 from threading import Lock
@@ -30,6 +31,24 @@ class TriviaDatabase:
     def check_answer(self, answer):
         correct_answer = self.current_question['answer']
         return self.do_check_answer(answer, correct_answer, self._matching['character_count'])
+
+    def category_choice(self, n):
+        self.current_question = None
+        self._choices = []
+        for i in range(n):
+            self._choices.append(self.get_question())
+
+        return self._choices
+
+    def choose_category(self, n=None):
+        try:
+            if n is None:
+                n = choice(range(len(self._choices)))
+            self.current_question = self._choices[n]
+            self._choices = None
+            return True
+        except IndexError:
+            return False
 
     @staticmethod
     def answer_variants(answer):

@@ -32,6 +32,7 @@ class SlackTrivia:
         self._setup_handle_message()
         self._setup_hello()
         self._starttime = time.time()
+        self._choice_uid = None
         self._trivia = TriviaDatabase(
             self._config['database'],
             self._team_id(),
@@ -118,7 +119,11 @@ class SlackTrivia:
 
     def new_question(self, message = None):
         self._attempts = []
-        question = self._trivia.make_question_attempt()
+        self._trivia.make_question_attempt()
+        self.post_current_question(message=message)
+
+    def post_current_question(self, *_, message = None, **__):
+        question = self._trivia.current_question
         question['comment'] = '_{}_'.format(question['comment']) if question['comment'] else ''
 
         q_template = '({year}) *{category}* {comment} for *{value}*\n>{question}'
@@ -132,6 +137,7 @@ class SlackTrivia:
             (['exit'], None, self.exit),
             (['uptime'], None, self.uptime),
             (['new', 'trivia new'], 'Skip to the next question', lambda *_, **__: self.update_attempt(None, None)),
+            (['repeat', 'repeat question'], 'Repeat the current question', self.post_current_question),
             (['alltime', 'score', 'scores'], 'Scores for all time', self.show_alltime_scores),
             (['yesterday'], 'Scores for yesterday', self.show_yesterday_scores),
             (['today'], 'Scores for today', self.show_today_scores),
@@ -234,10 +240,46 @@ class SlackTrivia:
             score = status['score']
             rank = status['rank']
             message += ' -- {} (today: {:,} #{})'.format(self.get_username(winning_user), score, rank)
-        self.new_question(message)
+
+        if self._config['category_choice']['on'] and winning_user is not None:
+            self._choice_uid = winning_user
+            choices = self._trivia.category_choice(self._config['category_choice']['number'])
+            choices_str = []
+            for i, choice in enumerate(choices):
+                choice_str = '*{}:* {}'.format(i+1, choice['category'])
+                if choice['comment'] is not None:
+                    choice_str += ' _{}_'.format(choice['comment'])
+                choices_str.append(choice_str)
+            message2 = '{}\n*{}*, pick a new category... ({} seconds)\n{}'.format(
+                message,
+                self.get_username(winning_user),
+                self._config['category_choice']['timeout'],
+                '\n'.join(choices_str),
+                )
+            self.post_message(message2)
+################### aaaaa these arent generating attempts
+################### need to implement the timeout
+################### need to test that other users can't select category
+################### test timeout/random selection
+################### validate selection (prevent 0 - 1 = -1 = last)
+################### select category by word???????????
+        else:
+            self.new_question(message)
 
     def handle_answer(self, user, text, ts):
-        # need to make this more generic to handle skip and no right answer/user
-        self._attempts.append(user)
-        if self._trivia.check_answer(text):
-            self.update_attempt(user, ts)
+        if self._choice_uid is not None:
+            if user == self._choice_uid:
+                try:
+                    selection = int(text) - 1
+
+                except ValueError:
+                    return
+                
+                if self._trivia.choose_category(selection):
+                    self.post_current_question()
+                    self._choice_uid = None
+
+        else:
+            self._attempts.append(user)
+            if self._trivia.check_answer(text):
+                self.update_attempt(user, ts)
