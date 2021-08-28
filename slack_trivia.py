@@ -5,6 +5,7 @@ import signal
 import logging
 import datetime
 import time
+from time import sleep
 from slack_sdk.rtm_v2 import RTMClient
 from slack_sdk.errors import SlackApiError
 from trivia_database import TriviaDatabase
@@ -48,6 +49,8 @@ class SlackTrivia:
             kwargs={'suppress_no_scores': True},
             replace_existing=True)
 
+        self._max_tries = self._config.get('max_tries', 2)
+
         self._client.start()
 
     def _load_config(self, filename):
@@ -67,7 +70,15 @@ class SlackTrivia:
             **self._config['bot']
         }
         message_args.update(kwargs)
-        return self._client.web_client.chat_postMessage(**message_args)
+        tries = 0
+        while tries < max(self._max_tries, 1):
+            tries += 1
+            try:
+                return self._client.web_client.chat_postMessage(**message_args)
+            except Exception as ex:
+                logging.exception(ex)
+                logging.error('Slack send error. Try # ' + str(tries))
+                sleep(1)
 
     @staticmethod
     def do_exit():
@@ -140,7 +151,7 @@ class SlackTrivia:
 
     def exit(self, *_, **kwargs):
         if kwargs.get('user') == self._config['admin']:
-            ts = self.post_message(text='ok bye', channel=kwargs['channel'])['ts']
+            self.post_message(text='ok bye', channel=kwargs['channel'])
             self.do_exit()
 
     def help(self, *_, **kwargs):

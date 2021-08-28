@@ -3,6 +3,7 @@
     "trivia_channel": "C0....",
     "admin": "UE......",
     "database": "trivia.db",
+    "max_tries": 4,
     "bot": {
         "username": "Trivia Bot Beta",
         "icon_emoji": ":panda_face:"
