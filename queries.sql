@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS attempt
      correct_player_id INTEGER
   )
 
---name: make_question_attempt
+--name: create_question_attempt
 INSERT INTO attempt
   (
     question_id,

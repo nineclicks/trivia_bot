@@ -14,8 +14,8 @@ class TriviaDatabase:
         self._create_tables()
 
     def _create_tables(self):
-        for name, query in self._queries.items():
-            if name.startswith('create_') and name.endswith('_table'):
+        for query in self._queries:
+            if query.startswith('create_') and query.endswith('_table'):
                 self.execute(query, auto_commit = True)
 
     def _do_execute(self, query_name, params = None):
@@ -47,7 +47,7 @@ class TriviaDatabase:
 
             while row is not None:
                 if as_map:
-                    row = self.row_as_map(cursor, row)
+                    row = self._row_as_map(cursor, row)
 
                 yield row
                 row = cursor.fetchone()
@@ -58,12 +58,12 @@ class TriviaDatabase:
             row = cursor.fetchone()
 
             if as_map:
-                row = self.row_as_map(cursor, row)
+                row = self._row_as_map(cursor, row)
 
             return row
 
     @staticmethod
-    def row_as_map(cursor, row):
+    def _row_as_map(cursor, row):
         if row is None:
             return None
         return {k[0]:row[i] for i,k in enumerate(cursor.description)}
