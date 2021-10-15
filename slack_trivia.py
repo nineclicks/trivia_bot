@@ -32,7 +32,6 @@ class SlackTrivia:
         self._client = RTMClient(token=self._config['slack_bot_token'])
         self._setup_handle_message()
         self._setup_hello()
-        self._starttime = time.time()
         self._trivia = TriviaDatabase(
             self._config['database'],
             self._team_id(),

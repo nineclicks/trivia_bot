@@ -1,6 +1,6 @@
 import re
 import logging
-from time import time
+import time
 from typing import Callable
 
 import unidecode
@@ -12,9 +12,12 @@ class TriviaCore:
 
     def __init__(self, admin_uid, db_path, platform, matching):
         logging.info('Starting Trivia Database')
+        self._starttime = time.time()
+        self._admin_uid = admin_uid
         self._attempts = []
         self._post_question_handler = lambda: None
         self._post_message_handler = lambda: None
+        self._post_reply_handler = lambda: None
         self._matching = matching
         self._platform = platform
         self._db = TriviaDatabase(db_path)
@@ -115,20 +118,27 @@ class TriviaCore:
 
         return fn
 
+    def post_reply(self, fn):
+        """Decorate you post reply handler function.
+        """
+        self._post_reply_handler = fn
+
+        return fn
+
     def commands(self):
         return (
-            (['exit'], None, self.exit),
-            (['uptime'], None, self.uptime),
+            (['exit'], None, self._exit),
+            (['uptime'], None, self._uptime),
             (['new', 'trivia new'], 'Skip to the next question', lambda *_, **__: self._update_attempt(None, None)),
-            (['alltime', 'score', 'scores'], 'Scores for all time', self.show_alltime_scores),
-            (['yesterday'], 'Scores for yesterday', self.show_yesterday_scores),
-            (['today'], 'Scores for today', self.show_today_scores),
-            (['help'], 'Show this help info', self.help),
+            (['alltime', 'score', 'scores'], 'Scores for all time', self._show_alltime_scores),
+            (['yesterday'], 'Scores for yesterday', self._show_yesterday_scores),
+            (['today'], 'Scores for today', self._show_today_scores),
+            (['help'], 'Show this help info', self._help),
         )
 
     @staticmethod
     def _answer_variants(answer):
-        filters = [
+        answer_filters = [
             lambda x: [unidecode.unidecode(x)] if unidecode.unidecode(x) != x else [],
             lambda x: [re.sub(r'[0-9]+(?:[\.,][0-9]+)?', lambda y: num2words(y.group(0)), x)],
             lambda x: [x.replace(a, b) for a,b in [['&', 'and'],['%', 'percent']] if a in x],
@@ -138,10 +148,10 @@ class TriviaCore:
         ]
 
         possible_answers = [answer.lower()]
-        for filter in filters:
+        for answer_filter in answer_filters:
             for possible_answer in possible_answers:
                 try:
-                    possible_answers = list(set([*possible_answers, *filter(possible_answer)]))
+                    possible_answers = list(set([*possible_answers, *answer_filter(possible_answer)]))
                 except Exception as ex:
                     logging.exception(ex)
 
@@ -192,7 +202,7 @@ class TriviaCore:
         logging.info('New question id: ' + str(self.current_question['id']))
         self._db.execute(
             'create_question_attempt',
-            (self.current_question['id'], int(time())),
+            (self.current_question['id'], int(time.time())),
             auto_commit=True
         )
         return self.current_question
@@ -207,20 +217,13 @@ class TriviaCore:
         for row in rows:
             yield row
 
-    def get_scores(self):
-        rows = self._db.select_iter('get_scores', (self._platform,), as_map=True)
-        scores = []
-        for row in rows:
-            scores.append(row)
-        return scores
-
     def _update_question_attempt(self, attempts, players, correct_uid = None):
         logging.info('Question winner player id: ' + (str(correct_uid) or 'none'))
         params = {
             'attempts': attempts,
             'players': players,
             'player_id': None,
-            'complete_time': int(time()),
+            'complete_time': int(time.time()),
         }
         if correct_uid is not None:
             player_id = self._db.select_one(
@@ -236,41 +239,43 @@ class TriviaCore:
             auto_commit=True
         )
 
-    def exit(self, *_, **kwargs):
-        self._post_message_handler('exit')
-        #if kwargs.get('user') == self._config['admin']:
-        #    self.post_message(text='ok bye', channel=kwargs['channel'])
-        #    self.do_exit()
+    @staticmethod
+    def _do_exit():
+        os.kill(os.getpid(), signal.SIGTERM)
 
-    def help(self, *_, **kwargs):
-        self._post_message_handler('help')
-        #template = '!{:<20}{}'
-        #commands = '\n'.join([template.format(x[0][0], x[1]) for x in self.commands() if x[1] is not None])
-        #self.post_message('```{}```'.format(commands), channel=kwargs.get('channel'))
+    def _exit(self, *_, **kwargs):
+        if kwargs.get('uid') == self._admin_uid:
+            self._post_reply_handler('ok bye')
+            self._do_exit()
 
-    def uptime(self, *_, **kwargs):
+    def _help(self, *_, **kwargs):
+        template = '!{:<20}{}'
+        commands = '\n'.join([template.format(x[0][0], x[1]) for x in self.commands() if x[1] is not None])
+        self._post_reply_handler(commands, pre=True)
+
+    def _uptime(self, *_, **kwargs):
         self._post_message_handler('uptime')
-        #uptime = int(time.time()) - int(self._starttime)
-        #uptime_str = "{:0>8}".format(str(datetime.timedelta(seconds=uptime)))
-        #self.post_message(uptime_str, channel=kwargs['channel'])
+        uptime = int(time.time()) - int(self._starttime)
+        uptime_str = "{:0>8}".format(str(datetime.timedelta(seconds=uptime)))
+        self._post_reply_handler(uptime_str)
 
-    def show_today_scores(self, *_, **kwargs):
+    def _show_today_scores(self, *_, **kwargs):
         self._post_message_handler('today')
         #today_start = self.timestamp_midnight()
-        #self.show_scores(today_start, None, channel=kwargs.get('channel'))
+        #self._show_scores(today_start, None, channel=kwargs.get('channel'))
 
-    def show_yesterday_scores(self, *_, suppress_no_scores=False, **kwargs):
+    def _show_yesterday_scores(self, *_, suppress_no_scores=False, **kwargs):
         self._post_message_handler('yesterday')
         #yesterday_start = self.timestamp_midnight(1)
         #yesterday_end = self.timestamp_midnight()
-        #self.show_scores(yesterday_start, yesterday_end, suppress_no_scores=suppress_no_scores, channel=kwargs.get('channel'))
+        #self._show_scores(yesterday_start, yesterday_end, suppress_no_scores=suppress_no_scores, channel=kwargs.get('channel'))
 
-    def show_alltime_scores(self, *_, **kwargs):
+    def _show_alltime_scores(self, *_, **kwargs):
         self._post_message_handler('alltime')
         #start = 0
-        #self.show_scores(start, None, 'Alltime Scores', channel=kwargs.get('channel'))
+        #self._show_scores(start, None, 'Alltime Scores', channel=kwargs.get('channel'))
 
-    def show_scores(self, start, end, title=None, suppress_no_scores=False, channel=None):
+    def _show_scores(self, start, end, title=None, suppress_no_scores=False, channel=None):
         return
         #if title is None:
         #    title = 'Scoreboard for {}'.format(self.ftime(start))
@@ -289,5 +294,3 @@ class TriviaCore:
         #        score['name'] = '(user gone)'
 
         #title2 = '=' * len(title)
-        #scoreboard = self.format_scoreboard(scores)
-        #self.post_message('```{}\n{}\n{}```'.format(title, title2,scoreboard), channel=channel)
