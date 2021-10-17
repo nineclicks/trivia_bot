@@ -1,3 +1,52 @@
+--name: create_category_table
+CREATE TABLE IF NOT EXISTS category
+  (
+     id          INTEGER NOT NULL PRIMARY KEY,
+     show_number INTEGER,
+     show_year   INTEGER,
+     title       TEXT,
+     comment     TEXT
+  ) 
+
+--name: create_question_table
+CREATE TABLE IF NOT EXISTS question
+  (
+     id          INTEGER NOT NULL PRIMARY KEY,
+     category_id INTEGER,
+     value       INTEGER,
+     question    TEXT,
+     answer      TEXT,
+     non_text    INTEGER
+  ) 
+
+--name: create_player_table
+CREATE TABLE IF NOT EXISTS player
+  (
+     id          INTEGER NOT NULL PRIMARY KEY,
+     uid         TEXT,
+     platform    TEXT
+  ) 
+
+--name: create_question_round_table
+CREATE TABLE IF NOT EXISTS question_round
+  (
+     id                INTEGER NOT NULL PRIMARY KEY,
+     question_id       INTEGER,
+     time              INTEGER,
+     complete_time     INTEGER,
+     correct_player_id INTEGER
+  )
+
+--name: create_attempt_table
+CREATE TABLE IF NOT EXISTS attempt
+  (
+     id                INTEGER NOT NULL PRIMARY KEY,
+     question_round_id INTEGER,
+     player_id         INTEGER,
+     attempts          INTEGER,
+     correct           INTEGER
+  )
+
 --name: get_random_question
 SELECT q.id,
        c.title as category,
@@ -38,52 +87,8 @@ FROM   question q
 WHERE  q.question LIKE '%' || ?1 || '%' OR
        q.answer LIKE '%' || ?1 || '%'
 
---name: create_category_table
-CREATE TABLE IF NOT EXISTS category
-  (
-     id          INTEGER NOT NULL PRIMARY KEY,
-     show_number INTEGER,
-     show_year   INTEGER,
-     title       TEXT,
-     comment     TEXT
-  ) 
-
---name: create_question_table
-CREATE TABLE IF NOT EXISTS question
-  (
-     id          INTEGER NOT NULL PRIMARY KEY,
-     category_id INTEGER,
-     value       INTEGER,
-     question    TEXT,
-     answer      TEXT,
-     non_text    INTEGER
-  ) 
-
---name: create_player_table
-CREATE TABLE IF NOT EXISTS player
-  (
-     id          INTEGER NOT NULL PRIMARY KEY,
-     uid         TEXT,
-     score       INTEGER,
-     correct     INTEGER,
-     incorrect   INTEGER,
-     platform    TEXT
-  ) 
-
---name: create_attempt_table
-CREATE TABLE IF NOT EXISTS attempt
-  (
-     id                INTEGER NOT NULL PRIMARY KEY,
-     question_id       INTEGER,
-     time              INTEGER,
-     complete_time     INTEGER,
-     attempts          INTEGER,
-     players           INTEGER,
-     correct_player_id INTEGER
-  )
-
---name: create_question_attempt
-INSERT INTO attempt
+--name: create_question_round
+INSERT INTO question_round
   (
     question_id,
     time
@@ -97,13 +102,11 @@ SELECT id FROM player
 WHERE uid = :uid
   AND platform = :platform
 
---name: update_question_attempt
-UPDATE attempt
-SET attempts = :attempts,
-    players = :players,
-    correct_player_id = :player_id,
+--name: update_question_round
+UPDATE question_round
+SET correct_player_id = :player_id,
     complete_time = :complete_time
-WHERE time = (SELECT MAX(time) FROM attempt)
+WHERE time = (SELECT MAX(time) FROM question_round)
 
 --name: get_last_question
 SELECT q.id,
@@ -113,12 +116,12 @@ SELECT q.id,
        q.value as value,
        q.question,
        q.answer
-FROM attempt a
+FROM question_round a
        LEFT JOIN question q
               on a.question_id = q.id
        LEFT JOIN category c
               ON q.category_id = c.id
-WHERE  a.time = (SELECT MAX(time) FROM attempt)
+WHERE  a.time = (SELECT MAX(time) FROM question_round)
 LIMIT  1
 
 --name: get_player_score
@@ -134,39 +137,26 @@ WHERE uid = :uid
 INSERT INTO player
   (
     uid,
-    score,
-    correct,
-    incorrect,
     platform
   )
 SELECT
   :uid,
-  0,
-  0,
-  0,
   :platform
 WHERE NOT EXISTS (SELECT 1 FROM player WHERE uid = :uid)
 
---name: answer_right
-UPDATE player
-SET score = (SELECT score + :value FROM player WHERE uid = :uid and platform = :platform)
-  , correct = (SELECT correct + 1 FROM player WHERE uid = :uid and platform = :platform)
-WHERE uid = :uid and platform = :platform
-
---name: answer_wrong
-UPDATE player
-SET incorrect = (SELECT incorrect + 1 FROM player WHERE uid = :uid and platform = :platform)
-WHERE uid = :uid and platform = :platform
-
---name: get_scores
-SELECT
-  uid,
-  score,
-  correct,
-  incorrect
-FROM player
-WHERE platform = ?
-ORDER BY score DESC
+--name: player_attempt
+INSERT INTO attempt
+(
+  question_round_id,
+  player_id,
+  attempts,
+  correct
+) VALUES (
+  (SELECT a.id FROM question_round a WHERE a.time = (SELECT MAX(b.time) FROM question_round b)),
+  (SELECT id FROM player WHERE uid = :uid),
+  :attempts,
+  :correct
+)
 
 --name: get_timeframe_scores
 SELECT
@@ -183,14 +173,14 @@ FROM
       FROM
          player p 
          LEFT JOIN
-            attempt a 
-            ON p.id = a.correct_player_id 
+            question_round r 
+            ON p.id = r.correct_player_id 
          LEFT JOIN
             question q 
-            ON a.question_id = q.id 
+            ON r.question_id = q.id 
       WHERE
-         a.complete_time >= :start_time
-         AND (a.complete_time < :end_time OR :end_time IS NULL)
+         r.complete_time >= :start_time
+         AND (r.complete_time < :end_time OR :end_time IS NULL)
       GROUP BY
          p.uid
    )

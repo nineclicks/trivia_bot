@@ -1,3 +1,7 @@
+"""
+Module for TriviaDatabase class
+"""
+
 import re
 import sqlite3
 from pathlib import Path
@@ -6,6 +10,9 @@ REG_QUERIES = r'(?i)^\s*--\s*name\s*:\s*(\S+)\s*\n([\S\s]+?)(?=--name|\Z)'
 QUERIES_FILE = (Path(__file__).parent / 'queries.sql').resolve()
 
 class TriviaDatabase:
+    """
+    Trivia database components
+    """
 
     def __init__(self, db_path):
         self._queries = self._load_queries(QUERIES_FILE)
@@ -25,7 +32,6 @@ class TriviaDatabase:
         cursor = self._connection.cursor()
         query = self._queries[query_name]
         cursor.execute(query, params)
-        self.last_row_id = cursor.lastrowid
 
         return cursor
 
@@ -39,7 +45,7 @@ class TriviaDatabase:
     def commit(self):
         with self._lock:
             self._connection.commit()
-        
+
     def select_iter(self, query_name, params = None, as_map = False):
         with self._lock:
             cursor = self._do_execute(query_name, params)
@@ -51,7 +57,7 @@ class TriviaDatabase:
 
                 yield row
                 row = cursor.fetchone()
-        
+
     def select_one(self, query_name, params = None, as_map = False):
         with self._lock:
             cursor = self._do_execute(query_name, params)
@@ -72,8 +78,8 @@ class TriviaDatabase:
     def _load_queries(filename):
         queries = {}
 
-        with open(filename, 'r') as fp:
-            query_text = fp.read()
+        with open(filename, 'r', encoding='utf-8') as file_pointer:
+            query_text = file_pointer.read()
 
         matches = re.finditer(REG_QUERIES, query_text, flags = re.MULTILINE)
 
@@ -81,5 +87,5 @@ class TriviaDatabase:
             name = match[1]
             query = match[2]
             queries[name] = query
-        
+
         return queries

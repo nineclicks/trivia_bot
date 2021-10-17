@@ -1,34 +1,117 @@
+"""
+Module for TriviaCore class
+"""
+
+import os
 import re
-import logging
 import time
+import signal
+import logging
+import datetime
+from threading import Lock
 from typing import Callable
 
 import unidecode
+from tabulate import tabulate
 from num2words import num2words
+from apscheduler.schedulers.background import BackgroundScheduler
 
 from trivia_database import TriviaDatabase
 
 class TriviaCore:
+    """
+    Core trivia components
+    """
+    # pylint: disable=too-many-instance-attributes
 
-    def __init__(self, admin_uid, db_path, platform, matching):
-        logging.info('Starting Trivia Database')
+    def __init__(self, database_path, **kwargs):
+        logging.info('Starting Trivia Core')
+        self._lock = Lock()
         self._starttime = time.time()
-        self._admin_uid = admin_uid
+        self._admin_uid = kwargs.get('admin_uid')
         self._attempts = []
-        self._post_question_handler = lambda: None
-        self._post_message_handler = lambda: None
-        self._post_reply_handler = lambda: None
-        self._matching = matching
-        self._platform = platform
-        self._db = TriviaDatabase(db_path)
-        self.current_question = self._get_last_question()
+        self._post_question_handler = lambda x: None
+        self._post_message_handler = lambda x: None
+        self._post_reply_handler = lambda x: None
+        self._pre_format_handler = lambda x: x
+        self._get_display_name_handler = lambda x: x
+        self._min_matching_characters = kwargs.get('min_matching_characters', 5)
+        self._platform = kwargs.get('platform')
+        self._db = TriviaDatabase(database_path)
+        self._command_prefix = '!'
+        self._current_question = self._get_last_question()
+        self._create_scoreboard_schedule(kwargs['scoreboard_schedule'])
+
+    def _create_scoreboard_schedule(self, schedules):
+        self._sched = BackgroundScheduler()
+        self._sched.start()  
+
+        for schedule in schedules:
+            self._job = self._sched.add_job(
+                self._show_scores,
+                'cron',
+                **schedule['time'],
+                kwargs={'days_ago': schedule['days_ago'], 'suppress_no_scores': True},
+                replace_existing=False)
+
+
+    def handle_message(self, uid:str, text:str, message_payload, correct_callback:callable):
+        """
+        Handle incoming answers and commands from users
+        """
+
+        with self._lock:
+            if text.startswith(self._command_prefix):
+                self._handle_command(uid, text[1:], message_payload)
+
+            else:
+                self._attempt_answer(uid, text, correct_callback)
+
+    def on_pre_format(self, func):
+        """Decorate you preformatted text handler function.
+        """
+        self._pre_format_handler = func
+
+        return func
+
+    def on_post_question(self, func):
+        """Decorate you post question handler function.
+        """
+        self._post_question_handler = func
+
+        if self._current_question is None:
+            self._new_question()
+
+        return func
+
+    def on_post_message(self, func):
+        """Decorate you post message handler function.
+        """
+        self._post_message_handler = func
+
+        return func
+
+    def on_post_reply(self, func):
+        """Decorate you post reply handler function.
+        """
+        self._post_reply_handler = func
+
+        return func
+
+    def on_get_display_name(self, func):
+        """Decorate you get display name handler function.
+        """
+        self._get_display_name_handler = func
+
+        return func
 
     def _get_new_question(self):
         """
         Select a random question from the database
         """
 
-        return self._db.select_one('get_random_question', as_map=True)
+        q = self._db.select_one('get_random_question', as_map=True)
+        return q
 
     def _get_last_question(self):
         """
@@ -37,37 +120,33 @@ class TriviaCore:
 
         return self._db.select_one('get_last_question', as_map=True)
 
-    def _new_question(self, winning_uid=None):
-        if self.current_question:
-            winning_answer = self.current_question['answer']
+    def _new_question(self, winning_user=None):
+        if self._current_question:
+            winning_answer = self._current_question['answer']
         else:
             winning_answer = None
 
         self._attempts = []
-        question = self._create_question_attempt()
-        self._post_question_handler(winning_uid = winning_uid, winning_answer = winning_answer, **question)
+        question = self._create_question_round()
+        self._post_question_handler({
+            'winning_user': winning_user,
+            'winning_answer': winning_answer,
+            **question
+            })
 
-    def attempt_answer(self, uid:str, answer:str, correct_callback:Callable=None):
-        """A user attempts to answer a question
-
-        Args:
-            uid (str): The user's uid
-            answer (str): The user's uid
-            correct_callback (Callable, optional): Callback function to run if this attempt is correct.
-        """
+    def _attempt_answer(self, uid:str, answer:str, correct_callback:Callable=None):
         self._attempts.append(uid)
 
         if self._check_answer(answer):
             if correct_callback:
                 correct_callback()
 
-            self._update_attempt(uid)
-            self._new_question(uid)
+            self._complete_question_round(winning_uid=uid)
 
-    def handle_command(self, uid, text, callback):
-        for command in self.commands():
+    def _handle_command(self, uid, text, message_payload):
+        for command in self._commands():
             if text in command[0]:
-                command[2](uid=uid, text=text, callback=callback)
+                command[2](uid=uid, text=text, message_payload=message_payload)
                 break
 
     def _check_answer(self, answer):
@@ -75,108 +154,75 @@ class TriviaCore:
         Check an answer against the current question
         """
 
-        correct_answer = self.current_question['answer']
-        return self._do_check_answer(answer, correct_answer, self._matching['character_count'])
+        correct_answer = self._current_question['answer']
+        return self._do_check_answer(answer, correct_answer, self._min_matching_characters)
+    def _player_attempt(self, uid, attempts, correct):
+        self._db.execute('player_attempt', {
+            'uid': uid,
+            'attempts': int(attempts),
+            'correct': int(correct)
+            }, auto_commit=True)
 
-    def _update_attempt(self, winning_uid):
-        attempt_users = set(self._attempts)
-        for attempt_user in attempt_users:
+    def _complete_question_round(self, winning_uid):
+        for attempt_user in set(self._attempts):
             self._add_user(attempt_user)
-            if winning_uid != attempt_user:
-                self._user_wrong_answer(attempt_user)
-            else:
-                self._user_right_answer(attempt_user, self.current_question['value'])
+            self._player_attempt(
+                    attempt_user,
+                    self._attempts.count(attempt_user),
+                    attempt_user == winning_uid
+                    )
 
-        self._update_question_attempt(
-            attempts=len(self._attempts),
-            players=len(attempt_users),
+        self._update_question_round_table(
             correct_uid=winning_uid,
         )
 
-        #message = '{}: *{}*'.format('Correct' if winning_uid is not None else 'Answer', self._trivia.current_question['answer'])
-        #TODO send message
-        #if winning_uid is not None:
-        #    status = next(self._trivia.get_player_stats_timeframe(winning_uid, self.timestamp_midnight()), None) # TODO deal with None case
-        #    score = status['score']
-        #    rank = status['rank']
-        #    message += ' -- {} (today: {:,} #{})'.format(self.get_username(winning_uid), score, rank)
+        winning_user = None
 
-    def post_question(self, fn):
-        """Decorate you post question handler function.
-        """
-        self._post_question_handler = fn
+        if winning_uid:
+            stats = self._get_player_stats_timeframe(winning_uid, self._timestamp_midnight())
+            winning_user = next(stats, None) # TODO deal with None case
+            stats = None # This is crutial to release the generator and therefore the db lock
 
-        if self.current_question is None:
-            self._new_question()
+        self._new_question(winning_user)
 
-        return fn
-
-    def post_message(self, fn):
-        """Decorate you post message handler function.
-        """
-        self._post_message_handler = fn
-
-        return fn
-
-    def post_reply(self, fn):
-        """Decorate you post reply handler function.
-        """
-        self._post_reply_handler = fn
-
-        return fn
-
-    def commands(self):
+    def _commands(self):
         return (
-            (['exit'], None, self._exit),
-            (['uptime'], None, self._uptime),
-            (['new', 'trivia new'], 'Skip to the next question', lambda *_, **__: self._update_attempt(None, None)),
-            (['alltime', 'score', 'scores'], 'Scores for all time', self._show_alltime_scores),
-            (['yesterday'], 'Scores for yesterday', self._show_yesterday_scores),
-            (['today'], 'Scores for today', self._show_today_scores),
-            (['help'], 'Show this help info', self._help),
+            (
+                ['exit'],
+                None,
+                self._command_exit
+            ),
+            (
+                ['uptime'],
+                None,
+                self._command_uptime
+            ),
+            (
+                ['new', 'trivia new'],
+                'Skip to the next question',
+                lambda *_, **__: self._complete_question_round(winning_uid=None)
+            ),
+            (
+                ['alltime', 'score', 'scores'],
+                'Scores for all time',
+                lambda *_, **__: self._show_scores(days_ago=None, suppress_no_scores=False)
+            ),
+            (
+                ['yesterday'],
+                'Scores for yesterday',
+                lambda *_, **__: self._show_scores(days_ago=1, suppress_no_scores=False)
+            ),
+            (
+                ['today'],
+                'Scores for today',
+                lambda *_, **__: self._show_scores(days_ago=0, suppress_no_scores=False)
+            ),
+            (
+                ['help'],
+                'Show this help info',
+                self._command_help
+            ),
         )
-
-    @staticmethod
-    def _answer_variants(answer):
-        answer_filters = [
-            lambda x: [unidecode.unidecode(x)] if unidecode.unidecode(x) != x else [],
-            lambda x: [re.sub(r'[0-9]+(?:[\.,][0-9]+)?', lambda y: num2words(y.group(0)), x)],
-            lambda x: [x.replace(a, b) for a,b in [['&', 'and'],['%', 'percent']] if a in x],
-            lambda x: [x[len(a):] for a in ['a ', 'an ', 'the '] if x.startswith(a)],
-            lambda x: [''.join([a for a in x if a not in ' '])],
-            lambda x: [''.join([a for a in x if a not in '\'().,"-'])],
-        ]
-
-        possible_answers = [answer.lower()]
-        for answer_filter in answer_filters:
-            for possible_answer in possible_answers:
-                try:
-                    possible_answers = list(set([*possible_answers, *answer_filter(possible_answer)]))
-                except Exception as ex:
-                    logging.exception(ex)
-
-        return possible_answers
-
-    @staticmethod
-    def _do_check_answer(answer, correct_answer, match_character_count):
-        correct_answer_variations = TriviaCore._answer_variants(correct_answer)
-        given_answer_variations = TriviaCore._answer_variants(answer)
-
-        logging.debug(
-            'Correct answers:\n'
-            + str(correct_answer_variations)
-            + '\nGiven answers:\n'
-            + str(given_answer_variations)
-        )
-
-        for correct_answer_variation in correct_answer_variations:
-            for given_answer_variation in given_answer_variations:
-
-                if (len(given_answer_variation.strip(' ')) >= min(match_character_count, len(correct_answer_variation)) and
-                    given_answer_variation.strip() in correct_answer_variation):
-                    return True
-
-        return False
 
     def _add_user(self, uid):
         self._db.execute('add_player', {
@@ -197,31 +243,29 @@ class TriviaCore:
             'value': value,
         }, auto_commit=True)
 
-    def _create_question_attempt(self):
-        self.current_question = self._get_new_question()
-        logging.info('New question id: ' + str(self.current_question['id']))
+    def _create_question_round(self):
+        self._current_question = self._get_new_question()
+        logging.info('New question id: %s', self._current_question['id'])
         self._db.execute(
-            'create_question_attempt',
-            (self.current_question['id'], int(time.time())),
+            'create_question_round',
+            (self._current_question['id'], int(time.time())),
             auto_commit=True
         )
-        return self.current_question
+        return self._current_question
 
-    def get_player_stats_timeframe(self, uid, start_time, end_time=None):
+    def _get_player_stats_timeframe(self, uid, start_time, end_time=None):
         rows = self._db.select_iter('get_timeframe_scores', {
             'uid': uid,
             'start_time': start_time,
             'end_time': end_time,
         }, as_map=True)
-        
+
         for row in rows:
             yield row
 
-    def _update_question_attempt(self, attempts, players, correct_uid = None):
-        logging.info('Question winner player id: ' + (str(correct_uid) or 'none'))
+    def _update_question_round_table(self, correct_uid = None):
+        logging.info('Question winner player id: %s', correct_uid or 'none')
         params = {
-            'attempts': attempts,
-            'players': players,
             'player_id': None,
             'complete_time': int(time.time()),
         }
@@ -234,63 +278,115 @@ class TriviaCore:
             params['player_id'] = player_id
 
         self._db.execute(
-            'update_question_attempt',
+            'update_question_round',
             params,
             auto_commit=True
         )
+
+    def _command_exit(self, *_, message_payload, **kwargs):
+        if kwargs.get('uid') == self._admin_uid:
+            self._post_reply_handler('ok bye', message_payload=message_payload)
+            self._do_exit()
+
+    def _command_help(self, *_, message_payload, **__):
+        template = '{}{:<20}{}'
+        fmt = lambda x: template.format(self._command_prefix, x[0][0], x[1])
+        c_list = [fmt(x) for x in self._commands() if x[1] is not None]
+        commands = '\n'.join(c_list)
+        formatted = self._pre_format_handler(commands)
+        self._post_reply_handler(formatted, message_payload=message_payload)
+
+    def _command_uptime(self, *_, message_payload, **__):
+        uptime = int(time.time()) - int(self._starttime)
+        uptime_str = str(datetime.timedelta(seconds=uptime))
+        format_str = f'{uptime_str:0>8}'
+        self._post_reply_handler(format_str, message_payload=message_payload)
+
+    def _show_scores(self, days_ago, suppress_no_scores=False, message_payload=None):
+        if days_ago == None:
+            start = 0
+            end = None
+            title = 'Alltime Scores'
+        else:
+            start = self._timestamp_midnight(days_ago)
+            end = self._timestamp_midnight(days_ago - 1)
+            title = f'Scoreboard for {self._ftime(start)}'
+
+        scores = list(self._get_player_stats_timeframe(None, start, end))
+
+        if suppress_no_scores and len(scores) == 0:
+            return
+
+        for score in scores:
+            # Get the current display name from slack, limit to 32 chars
+            score['name'] = self._get_display_name_handler(score['uid'])[:32]
+
+        title2 = '=' * len(title)
+        scoreboard = self._format_scoreboard(scores)
+        scoreboard_pre = f'{title}\n{title2}\n{scoreboard}'
+        formatted = self._pre_format_handler(scoreboard_pre)
+        if message_payload:
+            self._post_reply_handler(formatted, message_payload)
+        else:
+            self._post_message_handler(formatted)
 
     @staticmethod
     def _do_exit():
         os.kill(os.getpid(), signal.SIGTERM)
 
-    def _exit(self, *_, **kwargs):
-        if kwargs.get('uid') == self._admin_uid:
-            self._post_reply_handler('ok bye')
-            self._do_exit()
+    @staticmethod
+    def _timestamp_midnight(days_ago=0):
+        day = datetime.datetime.today() - datetime.timedelta(days=days_ago)
+        return int(datetime.datetime.combine(day, datetime.time.min).timestamp())
 
-    def _help(self, *_, **kwargs):
-        template = '!{:<20}{}'
-        commands = '\n'.join([template.format(x[0][0], x[1]) for x in self.commands() if x[1] is not None])
-        self._post_reply_handler(commands, pre=True)
+    @staticmethod
+    def _ftime(timestamp):
+        return time.strftime('%A %B %d %Y',time.localtime(int(timestamp)))
 
-    def _uptime(self, *_, **kwargs):
-        self._post_message_handler('uptime')
-        uptime = int(time.time()) - int(self._starttime)
-        uptime_str = "{:0>8}".format(str(datetime.timedelta(seconds=uptime)))
-        self._post_reply_handler(uptime_str)
+    @staticmethod
+    def _format_scoreboard(scores):
+        cols = [
+            ('rank', lambda x: x),
+            ('name', lambda x: x),
+            ('score', lambda x: f'{x:,}'),
+            ('correct', lambda x: x),
+        ]
 
-    def _show_today_scores(self, *_, **kwargs):
-        self._post_message_handler('today')
-        #today_start = self.timestamp_midnight()
-        #self._show_scores(today_start, None, channel=kwargs.get('channel'))
+        return tabulate([{col: fn(x[col]) for col, fn in cols} for x in scores], headers='keys')
 
-    def _show_yesterday_scores(self, *_, suppress_no_scores=False, **kwargs):
-        self._post_message_handler('yesterday')
-        #yesterday_start = self.timestamp_midnight(1)
-        #yesterday_end = self.timestamp_midnight()
-        #self._show_scores(yesterday_start, yesterday_end, suppress_no_scores=suppress_no_scores, channel=kwargs.get('channel'))
+    @staticmethod
+    def _answer_variants(answer):
+        answer_filters = [
+            lambda x: [unidecode.unidecode(x)] if unidecode.unidecode(x) != x else [],
+            lambda x: [re.sub(r'[0-9]+(?:[\.,][0-9]+)?', lambda y: num2words(y.group(0)), x)],
+            lambda x: [x.replace(a, b) for a,b in [['&', 'and'],['%', 'percent']] if a in x],
+            lambda x: [x[len(a):] for a in ['a ', 'an ', 'the '] if x.startswith(a)],
+            lambda x: [''.join([a for a in x if a not in ' '])],
+            lambda x: [''.join([a for a in x if a not in '\'().,"-'])],
+        ]
 
-    def _show_alltime_scores(self, *_, **kwargs):
-        self._post_message_handler('alltime')
-        #start = 0
-        #self._show_scores(start, None, 'Alltime Scores', channel=kwargs.get('channel'))
+        possible_answers = [answer.lower()]
+        for answer_filter in answer_filters:
+            for possible_answer in possible_answers:
+                try:
+                    possible_answers = list(set(
+                        [*possible_answers, *answer_filter(possible_answer)]
+                        ))
+                except Exception as ex:
+                    logging.exception(ex)
 
-    def _show_scores(self, start, end, title=None, suppress_no_scores=False, channel=None):
-        return
-        #if title is None:
-        #    title = 'Scoreboard for {}'.format(self.ftime(start))
+        return possible_answers
 
-        #scores = list(self._trivia.get_player_stats_timeframe(None, start, end))
+    @staticmethod
+    def _do_check_answer(answer, correct_answer, match_character_count):
+        correct_answer_variations = TriviaCore._answer_variants(correct_answer)
+        given_answer_variations = TriviaCore._answer_variants(answer)
 
-        #if suppress_no_scores and len(scores) == 0:
-        #    return
+        for correct_answer_variation in correct_answer_variations:
+            for given_answer_variation in given_answer_variations:
+                min_match_len = min(match_character_count, len(correct_answer_variation))
+                if (len(given_answer_variation.strip(' ')) >= min_match_len and
+                    given_answer_variation.strip() in correct_answer_variation):
+                    return True
 
-        #for score in scores:
-        #    try:
-        #        # Get the current display name from slack, limit to 32 chars
-        #        score['name'] = self.get_username(score['uid'])[:32]
-        #    except SlackApiError as ex:
-        #        # This uid no longer exists on the slack team
-        #        score['name'] = '(user gone)'
-
-        #title2 = '=' * len(title)
+        return False
