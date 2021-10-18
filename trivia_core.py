@@ -30,11 +30,12 @@ class TriviaCore:
         self._starttime = time.time()
         self._admin_uid = kwargs.get('admin_uid')
         self._attempts = []
-        self._post_question_handler = lambda x: None
-        self._post_message_handler = lambda x: None
-        self._post_reply_handler = lambda x: None
+        self._post_question_handler = lambda *_, **__: None
+        self._post_message_handler = lambda *_, **__: None
+        self._post_reply_handler = lambda *_, **__: None
         self._pre_format_handler = lambda x: x
         self._get_display_name_handler = lambda x: x
+        self._correct_answer_handler = lambda *_, **__: None
         self._min_matching_characters = kwargs.get('min_matching_characters', 5)
         self._platform = kwargs.get('platform')
         self._db = TriviaDatabase(database_path)
@@ -55,7 +56,7 @@ class TriviaCore:
                 replace_existing=False)
 
 
-    def handle_message(self, uid:str, text:str, message_payload, correct_callback:callable):
+    def handle_message(self, uid:str, text:str, message_payload):
         """
         Handle incoming answers and commands from users
         """
@@ -65,7 +66,7 @@ class TriviaCore:
                 self._handle_command(uid, text[1:], message_payload)
 
             else:
-                self._attempt_answer(uid, text, correct_callback)
+                self._attempt_answer(uid, text, message_payload)
 
     def on_pre_format(self, func):
         """Decorate you preformatted text handler function.
@@ -105,6 +106,13 @@ class TriviaCore:
 
         return func
 
+    def on_correct_answer(self, func):
+        """Decorate you correct answer handler function.
+        """
+        self._correct_answer_handler = func
+
+        return func
+
     def _get_new_question(self):
         """
         Select a random question from the database
@@ -134,12 +142,11 @@ class TriviaCore:
             **question
             })
 
-    def _attempt_answer(self, uid:str, answer:str, correct_callback:Callable=None):
+    def _attempt_answer(self, uid:str, answer:str, message_payload):
         self._attempts.append(uid)
 
         if self._check_answer(answer):
-            if correct_callback:
-                correct_callback()
+            self._correct_answer_handler(message_payload) # TODO send question as well?
 
             self._complete_question_round(winning_uid=uid)
 

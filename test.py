@@ -144,6 +144,10 @@ class SlackTrivia:
         def get_display_name(uid):
             return self.get_display_name(uid)
 
+        @self._trivia.on_correct_answer
+        def correct_answer(message_payload):
+            print('correct answer', message_payload) #TODO emoji react
+
         @self._client.on('message')
         def handle_message(_: RTMClient, event: dict):
             if(
@@ -159,7 +163,6 @@ class SlackTrivia:
                     uid = event['user'],
                     text = event['text'],
                     message_payload = event,
-                    correct_callback = lambda *_, **__: None
                     )
 
 slack = SlackTrivia()
