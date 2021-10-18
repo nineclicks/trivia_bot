@@ -124,15 +124,6 @@ FROM question_round a
 WHERE  a.time = (SELECT MAX(time) FROM question_round)
 LIMIT  1
 
---name: get_player_score
-SELECT score FROM player
-WHERE uid = :uid
-  AND platform = :platform
-
---name: get_player_rank
-SELECT rank FROM (SELECT uid, RANK () OVER (ORDER BY score DESC ) rank FROM player WHERE platform = :platform)
-WHERE uid = :uid
-
 --name: add_player
 INSERT INTO player
   (
@@ -160,24 +151,28 @@ INSERT INTO attempt
 
 --name: get_timeframe_scores
 SELECT
-   rank, uid, score, correct
+  rank,
+  uid,
+  score,
+  correct,
+  incorrect,
+  correct * 100 / (correct + incorrect) as percent
 FROM
-   (
-      SELECT
-         RANK () OVER (
-      ORDER BY
-         SUM(q.Value) DESC) rank,
-         p.uid uid,
-         SUM(q.value) score,
-         COUNT(q.value) correct 
-      FROM
-         player p 
-         LEFT JOIN
-            question_round r 
-            ON p.id = r.correct_player_id 
-         LEFT JOIN
-            question q 
-            ON r.question_id = q.id 
+  (
+    SELECT
+      RANK () OVER (
+        ORDER BY
+          SUM(CASE WHEN a.correct = 1 THEN q.value END) DESC
+      ) rank,
+      p.uid uid,
+      SUM(CASE WHEN a.correct = 1 THEN q.value END) score,
+      COUNT(CASE WHEN a.correct = 1 THEN 1 END) correct,
+      COUNT(CASE WHEN a.correct = 0 THEN 1 END) incorrect
+    FROM
+      player p
+      LEFT JOIN attempt a ON a.player_id = p.id
+      LEFT JOIN question_round r on r.id = a.question_round_id
+      LEFT JOIN question q on q.id = r.question_id
       WHERE
          r.complete_time >= :start_time
          AND (r.complete_time < :end_time OR :end_time IS NULL)

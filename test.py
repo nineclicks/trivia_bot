@@ -79,20 +79,27 @@ class SlackTrivia:
                 'real_name_normalized',
             ]
             logging.info('Getting username for uid: %s', uid)
+
+            name = None
+
             try:
                 user_info = self._client.web_client.users_info(user=uid)
+
+                user = user_info['user']['profile']
+                for name_type in name_priority:
+                    if (name_type in user
+                            and user[name_type] is not None
+                            and user[name_type] != ''):
+                        name = user[name_type]
+                        break
+
             except SlackApiError:
-                return '(no user)'
+                pass # There is no user
 
-            user = user_info['user']['profile']
-            for name_type in name_priority:
-                if (name_type in user
-                        and user[name_type] is not None
-                        and user[name_type] != ''):
-                    name = user[name_type]
-                    self._names_cache[uid] = (name, time.time())
-                    break
+        if not name:
+            name = '(no user)'
 
+        self._names_cache[uid] = (name, time.time())
         return name
 
     def _init_handlers(self):

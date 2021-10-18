@@ -350,6 +350,8 @@ class TriviaCore:
             ('name', lambda x: x),
             ('score', lambda x: f'{x:,}'),
             ('correct', lambda x: x),
+            ('incorrect', lambda x: x),
+            ('percent', lambda x: x),
         ]
 
         return tabulate([{col: fn(x[col]) for col, fn in cols} for x in scores], headers='keys')
