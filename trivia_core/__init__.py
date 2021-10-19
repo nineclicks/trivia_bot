@@ -15,7 +15,7 @@ from tabulate import tabulate
 from num2words import num2words
 from apscheduler.schedulers.background import BackgroundScheduler
 
-from trivia_database import TriviaDatabase
+from .trivia_database import TriviaDatabase
 
 class TriviaCore:
     """

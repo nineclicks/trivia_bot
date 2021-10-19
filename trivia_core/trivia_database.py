@@ -6,6 +6,7 @@ import re
 import sqlite3
 from pathlib import Path
 from threading import Lock
+
 REG_QUERIES = r'(?i)^\s*--\s*name\s*:\s*(\S+)\s*\n([\S\s]+?)(?=--name|\Z)'
 QUERIES_FILE = (Path(__file__).parent / 'queries.sql').resolve()
 
