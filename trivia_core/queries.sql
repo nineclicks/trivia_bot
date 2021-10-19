@@ -182,3 +182,31 @@ FROM
 WHERE
    uid = :uid
    OR :uid IS NULL;
+
+--name: test_add_categories
+INSERT INTO category (
+  show_number,
+  show_year,
+  title,
+  comment
+) VALUES (
+  1,
+  2000,
+  'This is a category',
+  'This is a category comment'
+)
+
+--name: test_add_questions
+INSERT INTO question (
+  category_id,
+  value,
+  question,
+  answer,
+  non_text
+) VALUES (
+  (SELECT id FROM category LIMIT 1),
+  200,
+  'question',
+  'answer',
+  0
+)
