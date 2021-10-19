@@ -9,7 +9,6 @@ import signal
 import logging
 import datetime
 from threading import Lock
-from typing import Callable
 
 import unidecode
 from tabulate import tabulate
@@ -43,22 +42,15 @@ class TriviaCore:
         self._current_question = self._get_last_question()
         self._create_scoreboard_schedule(kwargs['scoreboard_schedule'])
 
-    def _create_scoreboard_schedule(self, schedules):
-        self._sched = BackgroundScheduler()
-        self._sched.start()  
-
-        for schedule in schedules:
-            self._job = self._sched.add_job(
-                self._show_scores,
-                'cron',
-                **schedule['time'],
-                kwargs={'days_ago': schedule['days_ago'], 'suppress_no_scores': True},
-                replace_existing=False)
-
-
     def handle_message(self, uid:str, text:str, message_payload):
         """
         Handle incoming answers and commands from users
+
+        Arguments:
+            uid (str): Message user's uid
+            text (str): Message user's text
+            message_payload (any): Message payload data for interacting with
+                                   the given message
         """
 
         with self._lock:
@@ -70,14 +62,37 @@ class TriviaCore:
 
     def on_pre_format(self, func):
         """Decorate you preformatted text handler function.
+
+        Decorated function shall accept arguments:
+            message (str)
+
+        And return
+            str: The message with block preformatting
         """
+
         self._pre_format_handler = func
 
         return func
 
     def on_post_question(self, func):
         """Decorate you post question handler function.
+
+        Decorated function shall accept arguments:
+            question (dict):
+                winning_user (dict or None):
+                    rank (int): Winner's rank for the day
+                    uid (str): Winner's uid
+                    score (int): Winner's score for the day
+                    correct (int): Winner's number of correct for the day
+                winning_answer (str): Answer for the previoud question
+                category (str): Category for the new question
+                comment (str): Comment for the new question
+                year (int): Year of the new question
+                value (int): Point value of the new question
+                question (str): The new question text
+                answer (str): The new question answer
         """
+
         self._post_question_handler = func
 
         if self._current_question is None:
@@ -87,39 +102,89 @@ class TriviaCore:
 
     def on_post_message(self, func):
         """Decorate you post message handler function.
+
+        Decorated function shall accept arguments:
+            message (str): Message to post to trivia channel
         """
+
         self._post_message_handler = func
 
         return func
 
     def on_post_reply(self, func):
         """Decorate you post reply handler function.
+
+        This function will be called when the admin messages the bot outside of
+        the trivia channel. Use the message_payload to know where to reply.
+
+        Decorated function shall accept arguments:
+            message (str): Message to post to trivia channel
+            message_payload (any): Same message_payload passed in to handle_message()
         """
+
         self._post_reply_handler = func
 
         return func
 
     def on_get_display_name(self, func):
         """Decorate you get display name handler function.
+
+        Decorated function shall accept arguments:
+            uid (str): User's uid for which to get a display name
+
+        Decorated function shall return:
+            str: The display name of the given uid
         """
+
         self._get_display_name_handler = func
 
         return func
 
     def on_correct_answer(self, func):
         """Decorate you correct answer handler function.
+
+        Use this decorator for any extra actions taken with correct answer such
+        as an emoji reaction.
+
+        Decorated function shall accept arguments:
+            message_payload (any): Same message_payload passed in to handle_message()
+            question (dict):
+                winning_user (dict or None):
+                    rank (int): Winner's rank for the day
+                    uid (str): Winner's uid
+                    score (int): Winner's score for the day
+                    correct (int): Winner's number of correct for the day
+                winning_answer (str): Answer for the previoud question
+                category (str): Category for the new question
+                comment (str): Comment for the new question
+                year (int): Year of the new question
+                value (int): Point value of the new question
+                question (str): The new question text
+                answer (str): The new question answer
         """
+
         self._correct_answer_handler = func
 
         return func
+
+    def _create_scoreboard_schedule(self, schedules):
+        self._sched = BackgroundScheduler()
+        self._sched.start()
+
+        for schedule in schedules:
+            self._job = self._sched.add_job(
+                self._show_scores,
+                'cron',
+                **schedule['time'],
+                kwargs={'days_ago': schedule['days_ago'], 'suppress_no_scores': True},
+                replace_existing=False)
 
     def _get_new_question(self):
         """
         Select a random question from the database
         """
 
-        q = self._db.select_one('get_random_question', as_map=True)
-        return q
+        return self._db.select_one('get_random_question', as_map=True)
 
     def _get_last_question(self):
         """
@@ -146,7 +211,7 @@ class TriviaCore:
         self._attempts.append(uid)
 
         if self._check_answer(answer):
-            self._correct_answer_handler(message_payload) # TODO send question as well?
+            self._correct_answer_handler(message_payload, self._current_question)
 
             self._complete_question_round(winning_uid=uid)
 
@@ -187,7 +252,7 @@ class TriviaCore:
 
         if winning_uid:
             stats = self._get_player_stats_timeframe(winning_uid, self._timestamp_midnight())
-            winning_user = next(stats, None) # TODO deal with None case
+            winning_user = next(stats, None)
             stats = None # This is crutial to release the generator and therefore the db lock
 
         self._new_question(winning_user)
@@ -196,12 +261,12 @@ class TriviaCore:
         return (
             (
                 ['exit'],
-                None,
+                None, # Won't show in help message
                 self._command_exit
             ),
             (
                 ['uptime'],
-                None,
+                None, # Won't show in help message
                 self._command_uptime
             ),
             (
@@ -310,7 +375,7 @@ class TriviaCore:
         self._post_reply_handler(format_str, message_payload=message_payload)
 
     def _show_scores(self, days_ago, suppress_no_scores=False, message_payload=None):
-        if days_ago == None:
+        if days_ago is None:
             start = 0
             end = None
             title = 'Alltime Scores'

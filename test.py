@@ -145,8 +145,15 @@ class SlackTrivia:
             return self.get_display_name(uid)
 
         @self._trivia.on_correct_answer
-        def correct_answer(message_payload):
-            print('correct answer', message_payload) #TODO emoji react
+        def correct_answer(message_payload, _):
+            try:
+                self._client.web_client.reactions_add(
+                    channel = self._config['trivia_channel'],
+                    name = 'white_check_mark',
+                    timestamp = message_payload['ts'],
+                )
+            except Exception as ex:
+                logging.exception(ex)
 
         @self._client.on('message')
         def handle_message(_: RTMClient, event: dict):
