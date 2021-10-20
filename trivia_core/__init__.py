@@ -290,6 +290,21 @@ class TriviaCore:
                 lambda *_, **__: self._show_scores(days_ago=0, suppress_no_scores=False)
             ),
             (
+                ['week'],
+                'Scores for this week',
+                lambda *_, **__: self._show_scores(weeks_ago=0, suppress_no_scores=False)
+            ),
+            (
+                ['month'],
+                'Scores for this month',
+                lambda *_, **__: self._show_scores(months_ago=0, suppress_no_scores=False)
+            ),
+            (
+                ['year'],
+                'Scores for this year',
+                lambda *_, **__: self._show_scores(years_ago=0, suppress_no_scores=False)
+            ),
+            (
                 ['help'],
                 'Show this help info',
                 self._command_help
@@ -374,15 +389,21 @@ class TriviaCore:
         format_str = f'{uptime_str:0>8}'
         self._post_reply_handler(format_str, message_payload=message_payload)
 
-    def _show_scores(self, days_ago, suppress_no_scores=False, message_payload=None):
-        if days_ago is None:
+    def _show_scores(self, suppress_no_scores=False, message_payload=None, **kwargs):
+        kwargs = {k:v for k,v in kwargs.items() if v is not None}
+
+        if len(kwargs) == 0:
             start = 0
             end = None
             title = 'Alltime Scores'
         else:
-            start = self._timestamp_midnight(days_ago)
-            end = self._timestamp_midnight(days_ago - 1)
-            title = f'Scoreboard for {self._ftime(start)}'
+            start = self._timestamp_midnight(**kwargs)
+
+            # subtract one from whichever of days_ago, weeks_ago, etc is set
+            kwargs_minus_one = {k:v-1 for k,v in kwargs.items() if isinstance(v, int)}
+            end = self._timestamp_midnight(**kwargs_minus_one)
+
+            title = f'Scoreboard for {self._ftime(start, kwargs)}'
 
         scores = list(self._get_player_stats_timeframe(None, start, end))
 
@@ -407,13 +428,53 @@ class TriviaCore:
         os.kill(os.getpid(), signal.SIGTERM)
 
     @staticmethod
-    def _timestamp_midnight(days_ago=0):
-        day = datetime.datetime.today() - datetime.timedelta(days=days_ago)
-        return int(datetime.datetime.combine(day, datetime.time.min).timestamp())
+    def _timestamp_midnight(days_ago=None, weeks_ago=None, months_ago=None, years_ago=None):
+        day_start = datetime.datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if days_ago is not None:
+            day_start = day_start - datetime.timedelta(days=days_ago)
+
+        elif weeks_ago is not None:
+            day_of_week = (datetime.date.today().weekday() + 1) % 7
+            day_start = day_start - datetime.timedelta(day_of_week)
+            day_start = day_start - datetime.timedelta(weeks_ago * 7)
+
+        elif months_ago is not None:
+            day_start = day_start.replace(day=1)
+            month = day_start.month - months_ago
+            year = day_start.year
+
+            while month < 1:
+                month += 12
+                year -= 1
+
+            while month > 12:
+                month -= 12
+                year += 1
+
+            day_start = day_start.replace(year=year, month=month)
+
+        elif years_ago is not None:
+            year = day_start.year - years_ago
+            day_start = day_start.replace(year=year, month=1, day=1)
+
+        return int(day_start.timestamp())
 
     @staticmethod
-    def _ftime(timestamp):
-        return time.strftime('%A %B %d %Y',time.localtime(int(timestamp)))
+    def _ftime(timestamp, time_ago):
+        format_str = ''
+        formats = {
+                'days_ago': '%A %B %d %Y',
+                'weeks_ago': 'week starting %A %B %d %Y',
+                'months_ago': '%B %Y',
+                'years_ago': '%Y',
+                }
+
+        for k,v in time_ago.items():
+            if v is not None:
+                format_str = formats[k]
+
+        return time.strftime(format_str,time.localtime(int(timestamp)))
 
     @staticmethod
     def _format_scoreboard(scores):
