@@ -8,6 +8,7 @@ import time
 import signal
 import logging
 import datetime
+from datetime import datetime
 from threading import Lock
 
 import unidecode
@@ -17,6 +18,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 from .trivia_database import TriviaDatabase
 
+SUGGESTED_CONFIGS = [
+        ('admin_uid', ''),
+        ('min_matching_characters', 5),
+        ('platform', ''),
+        ('scoreboard_show_incorrect', False),
+        ('scoreboard_show_percent', False),
+        ('scoreboard_schedule', []),
+        ]
+
 class TriviaCore:
     """
     Core trivia components
@@ -25,9 +35,11 @@ class TriviaCore:
 
     def __init__(self, database_path, **kwargs):
         logging.info('Starting Trivia Core')
+        self._config = kwargs
+        self._check_config()
+
         self._lock = Lock()
         self._starttime = time.time()
-        self._admin_uid = kwargs.get('admin_uid')
         self._attempts = []
         self._post_question_handler = lambda *_, **__: None
         self._post_message_handler = lambda *_, **__: None
@@ -35,8 +47,6 @@ class TriviaCore:
         self._pre_format_handler = lambda x: x
         self._get_display_name_handler = lambda x: x
         self._correct_answer_handler = lambda *_, **__: None
-        self._min_matching_characters = kwargs.get('min_matching_characters', 5)
-        self._platform = kwargs.get('platform')
         self._db = TriviaDatabase(database_path)
         self._command_prefix = '!'
         self._current_question = self._get_last_question()
@@ -167,6 +177,18 @@ class TriviaCore:
 
         return func
 
+    def _check_config(self):
+        for suggested in SUGGESTED_CONFIGS:
+            key = suggested[0]
+            default = suggested[1]
+            if key not in self._config:
+                logging.warning(
+                        '%s not supplied to TriviaCore, defaulting to %s',
+                        key,
+                        repr(default)
+                        )
+                self._config[key] = default
+
     def _create_scoreboard_schedule(self, schedules):
         self._sched = BackgroundScheduler()
         self._sched.start()
@@ -176,7 +198,7 @@ class TriviaCore:
                 self._show_scores,
                 'cron',
                 **schedule['time'],
-                kwargs={'days_ago': schedule['days_ago'], 'suppress_no_scores': True},
+                kwargs={**schedule['for'], 'suppress_no_scores': True},
                 replace_existing=False)
 
     def _get_new_question(self):
@@ -227,7 +249,12 @@ class TriviaCore:
         """
 
         correct_answer = self._current_question['answer']
-        return self._do_check_answer(answer, correct_answer, self._min_matching_characters)
+        return self._do_check_answer(
+                answer,
+                correct_answer,
+                self._config.get('min_matching_characters', 5)
+                )
+
     def _player_attempt(self, uid, attempts, correct):
         self._db.execute('player_attempt', {
             'uid': uid,
@@ -314,19 +341,19 @@ class TriviaCore:
     def _add_user(self, uid):
         self._db.execute('add_player', {
             'uid': uid,
-            'platform': self._platform
+            'platform': self._config.get('platform')
         }, auto_commit=True)
 
     def _user_wrong_answer(self, uid):
         self._db.execute('answer_wrong', {
             'uid': uid,
-            'platform': self._platform,
+            'platform': self._config.get('platform'),
         }, auto_commit=True)
 
     def _user_right_answer(self, uid, value):
         self._db.execute('answer_right', {
             'uid': uid,
-            'platform': self._platform,
+            'platform': self._config.get('platform'),
             'value': value,
         }, auto_commit=True)
 
@@ -359,7 +386,7 @@ class TriviaCore:
         if correct_uid is not None:
             player_id = self._db.select_one(
                 'get_player_id',
-                {'uid': correct_uid, 'platform': self._platform},
+                {'uid': correct_uid, 'platform': self._config.get('platform')},
                 as_map=True)['id']
 
             params['player_id'] = player_id
@@ -371,7 +398,7 @@ class TriviaCore:
         )
 
     def _command_exit(self, *_, message_payload, **kwargs):
-        if kwargs.get('uid') == self._admin_uid:
+        if kwargs.get('uid') == self._config.get('admin_uid'):
             self._post_reply_handler('ok bye', message_payload=message_payload)
             self._do_exit()
 
@@ -429,13 +456,13 @@ class TriviaCore:
 
     @staticmethod
     def _timestamp_midnight(days_ago=None, weeks_ago=None, months_ago=None, years_ago=None):
-        day_start = datetime.datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_start = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
 
         if days_ago is not None:
             day_start = day_start - datetime.timedelta(days=days_ago)
 
         elif weeks_ago is not None:
-            day_of_week = (datetime.date.today().weekday() + 1) % 7
+            day_of_week = (datetime.today().weekday() + 1) % 7
             day_start = day_start - datetime.timedelta(day_of_week)
             day_start = day_start - datetime.timedelta(weeks_ago * 7)
 
@@ -476,16 +503,19 @@ class TriviaCore:
 
         return time.strftime(format_str,time.localtime(int(timestamp)))
 
-    @staticmethod
-    def _format_scoreboard(scores):
+    def _format_scoreboard(self, scores):
         cols = [
             ('rank', lambda x: x),
             ('name', lambda x: x),
             ('score', lambda x: f'{x:,}'),
             ('correct', lambda x: x),
-            ('incorrect', lambda x: x),
-            ('percent', lambda x: x),
         ]
+
+        if self._config.get('scoreboard_show_incorrect', False):
+            cols.append(('incorrect', lambda x: x))
+
+        if self._config.get('scoreboard_show_percent', False):
+            cols.append(('percent', lambda x: x))
 
         return tabulate([{col: fn(x[col]) for col, fn in cols} for x in scores], headers='keys')
 
