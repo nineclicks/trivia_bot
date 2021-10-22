@@ -4,11 +4,10 @@ Module for TriviaCore class
 
 import os
 import re
-import time
 import signal
 import logging
-import datetime
-from datetime import datetime
+from time import time, strftime, localtime
+from datetime import datetime, timedelta
 from threading import Lock
 
 import unidecode
@@ -39,7 +38,7 @@ class TriviaCore:
         self._check_config()
 
         self._lock = Lock()
-        self._starttime = time.time()
+        self._starttime = time()
         self._attempts = []
         self._post_question_handler = lambda *_, **__: None
         self._post_message_handler = lambda *_, **__: None
@@ -68,6 +67,8 @@ class TriviaCore:
                 self._handle_command(uid, text[1:], message_payload)
 
             else:
+                if self._current_question is None:
+                    raise ValueError('There is no current question. Have you set your @on_post_question handler?')
                 self._attempt_answer(uid, text, message_payload)
 
     def on_pre_format(self, func):
@@ -304,32 +305,32 @@ class TriviaCore:
             (
                 ['alltime', 'score', 'scores'],
                 'Scores for all time',
-                lambda *_, **__: self._show_scores(days_ago=None, suppress_no_scores=False)
+                lambda *_, message_payload=None, **__: self._show_scores(days_ago=None, suppress_no_scores=False, message_payload=message_payload)
             ),
             (
                 ['yesterday'],
                 'Scores for yesterday',
-                lambda *_, **__: self._show_scores(days_ago=1, suppress_no_scores=False)
+                lambda *_, message_payload=None, **__: self._show_scores(days_ago=1, suppress_no_scores=False, message_payload=message_payload)
             ),
             (
                 ['today'],
                 'Scores for today',
-                lambda *_, **__: self._show_scores(days_ago=0, suppress_no_scores=False)
+                lambda *_, message_payload=None, **__: self._show_scores(days_ago=0, suppress_no_scores=False, message_payload=message_payload)
             ),
             (
                 ['week'],
                 'Scores for this week',
-                lambda *_, **__: self._show_scores(weeks_ago=0, suppress_no_scores=False)
+                lambda *_, message_payload=None, **__: self._show_scores(weeks_ago=0, suppress_no_scores=False, message_payload=message_payload)
             ),
             (
                 ['month'],
                 'Scores for this month',
-                lambda *_, **__: self._show_scores(months_ago=0, suppress_no_scores=False)
+                lambda *_, message_payload=None, **__: self._show_scores(months_ago=0, suppress_no_scores=False, message_payload=message_payload)
             ),
             (
                 ['year'],
                 'Scores for this year',
-                lambda *_, **__: self._show_scores(years_ago=0, suppress_no_scores=False)
+                lambda *_, message_payload=None, **__: self._show_scores(years_ago=0, suppress_no_scores=False, message_payload=message_payload)
             ),
             (
                 ['help'],
@@ -344,25 +345,12 @@ class TriviaCore:
             'platform': self._config.get('platform')
         }, auto_commit=True)
 
-    def _user_wrong_answer(self, uid):
-        self._db.execute('answer_wrong', {
-            'uid': uid,
-            'platform': self._config.get('platform'),
-        }, auto_commit=True)
-
-    def _user_right_answer(self, uid, value):
-        self._db.execute('answer_right', {
-            'uid': uid,
-            'platform': self._config.get('platform'),
-            'value': value,
-        }, auto_commit=True)
-
     def _create_question_round(self):
         self._current_question = self._get_new_question()
         logging.info('New question id: %s', self._current_question['id'])
         self._db.execute(
             'create_question_round',
-            (self._current_question['id'], int(time.time())),
+            (self._current_question['id'], int(time())),
             auto_commit=True
         )
         return self._current_question
@@ -381,7 +369,7 @@ class TriviaCore:
         logging.info('Question winner player id: %s', correct_uid or 'none')
         params = {
             'player_id': None,
-            'complete_time': int(time.time()),
+            'complete_time': int(time()),
         }
         if correct_uid is not None:
             player_id = self._db.select_one(
@@ -410,11 +398,12 @@ class TriviaCore:
         formatted = self._pre_format_handler(commands)
         self._post_reply_handler(formatted, message_payload=message_payload)
 
-    def _command_uptime(self, *_, message_payload, **__):
-        uptime = int(time.time()) - int(self._starttime)
-        uptime_str = str(datetime.timedelta(seconds=uptime))
-        format_str = f'{uptime_str:0>8}'
-        self._post_reply_handler(format_str, message_payload=message_payload)
+    def _command_uptime(self, *_, message_payload, **kwargs):
+        if kwargs.get('uid') == self._config.get('admin_uid'):
+            uptime = int(time()) - int(self._starttime)
+            uptime_str = str(timedelta(seconds=uptime))
+            format_str = f'{uptime_str:0>8}'
+            self._post_reply_handler(format_str, message_payload=message_payload)
 
     def _show_scores(self, suppress_no_scores=False, message_payload=None, **kwargs):
         kwargs = {k:v for k,v in kwargs.items() if v is not None}
@@ -459,12 +448,12 @@ class TriviaCore:
         day_start = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
 
         if days_ago is not None:
-            day_start = day_start - datetime.timedelta(days=days_ago)
+            day_start = day_start - timedelta(days=days_ago)
 
         elif weeks_ago is not None:
             day_of_week = (datetime.today().weekday() + 1) % 7
-            day_start = day_start - datetime.timedelta(day_of_week)
-            day_start = day_start - datetime.timedelta(weeks_ago * 7)
+            day_start = day_start - timedelta(day_of_week)
+            day_start = day_start - timedelta(weeks_ago * 7)
 
         elif months_ago is not None:
             day_start = day_start.replace(day=1)
@@ -501,7 +490,7 @@ class TriviaCore:
             if v is not None:
                 format_str = formats[k]
 
-        return time.strftime(format_str,time.localtime(int(timestamp)))
+        return strftime(format_str,localtime(int(timestamp)))
 
     def _format_scoreboard(self, scores):
         cols = [
