@@ -72,7 +72,7 @@ class TriviaCore:
                 self._attempt_answer(uid, text, message_payload)
 
     def on_pre_format(self, func):
-        """Decorate you preformatted text handler function.
+        """Decorate your preformatted text handler function.
 
         Decorated function shall accept arguments:
             message (str)
@@ -86,7 +86,7 @@ class TriviaCore:
         return func
 
     def on_post_question(self, func):
-        """Decorate you post question handler function.
+        """Decorate your post question handler function.
 
         Decorated function shall accept arguments:
             question (dict):
@@ -112,7 +112,7 @@ class TriviaCore:
         return func
 
     def on_post_message(self, func):
-        """Decorate you post message handler function.
+        """Decorate your post message handler function.
 
         Decorated function shall accept arguments:
             message (str): Message to post to trivia channel
@@ -123,7 +123,7 @@ class TriviaCore:
         return func
 
     def on_post_reply(self, func):
-        """Decorate you post reply handler function.
+        """Decorate your post reply handler function.
 
         This function will be called when the admin messages the bot outside of
         the trivia channel. Use the message_payload to know where to reply.
@@ -138,7 +138,7 @@ class TriviaCore:
         return func
 
     def on_get_display_name(self, func):
-        """Decorate you get display name handler function.
+        """Decorate your get display name handler function.
 
         Decorated function shall accept arguments:
             uid (str): User's uid for which to get a display name
@@ -152,7 +152,7 @@ class TriviaCore:
         return func
 
     def on_correct_answer(self, func):
-        """Decorate you correct answer handler function.
+        """Decorate your correct answer handler function.
 
         Use this decorator for any extra actions taken with correct answer such
         as an emoji reaction.
