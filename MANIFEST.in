@@ -1,1 +1,1 @@
-include trivia_core/queries.sql
+include queries.sql
