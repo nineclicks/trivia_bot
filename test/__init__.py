@@ -1,13 +1,15 @@
-from os import stat
+import inspect
+import re
 import unittest
-from datetime import datetime
-import time
 import logging
-from unittest import mock
+from time import time
+from datetime import datetime
 from unittest.mock import Mock, patch, ANY
 
 from trivia_core import TriviaCore
-import trivia_core
+
+def ln():
+    return inspect.currentframe().f_back.f_lineno
 
 class TestTriviaCore(unittest.TestCase):
 
@@ -66,6 +68,68 @@ class TestTriviaCore(unittest.TestCase):
     @staticmethod
     def parse_scoreboard(scoreboard_str:str):
         return [line.split() for line in scoreboard_str.strip().split('\n')[4:]]
+
+    def test_scoreboard_schedule(self):
+        """Test that the apscheduler scoreboard job is set
+        """
+        config = {
+          "database_path": ":memory:",
+          "admin_uid": "a",
+          "min_matching_characters": 5,
+          "scoreboard_schedule": [
+            {
+              "for": {
+                "days_ago": 1
+              },
+              "time": {
+                "hour": 7,
+                "minute": 0
+              }
+            }
+          ],
+          "scoreboard_show_incorrect": False,
+          "scoreboard_show_percent": False
+        }
+
+        self._trivia = TriviaCore(**config, platform='test')
+        jobs = self._trivia._sched.get_jobs()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].next_run_time.minute, 0)
+        self.assertEqual(jobs[0].next_run_time.hour, 7)
+        self.assertLessEqual(jobs[0].next_run_time.timestamp() - time(), 24*60*60)
+        self.assertGreaterEqual(jobs[0].next_run_time.timestamp() - time(), 0)
+
+
+    @patch('os.kill')
+    def test_exit(self, os_kill):
+        """Test exit command by admin and unallowed non-admin
+        """
+        mock_ask_question = Mock()
+        mock_post_reply = Mock()
+        self._trivia.on_post_question(mock_ask_question)
+        self._trivia.on_post_reply(mock_post_reply)
+
+        self._trivia.handle_message('b', '!exit', 'payload')
+        mock_post_reply.assert_not_called()
+
+        self._trivia.handle_message('a', '!exit', 'payload')
+        mock_post_reply.assert_called_with('ok bye', message_payload='payload')
+        os_kill.assert_called()
+
+    def test_db_commit(self):
+        """Bonehead test for coverage
+        """
+        self._trivia._db.commit()
+
+    def test_bad_string(self):
+        """Bonehead test for coverage
+        """
+        bad_string = b'\0010010'
+        logging.disable(logging.CRITICAL)
+        results = self._trivia._answer_variants(bad_string)
+        logging.disable(logging.NOTSET)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0], bad_string)
 
     def test_missing_configs(self):
         """
@@ -247,112 +311,129 @@ class TestTriviaCore(unittest.TestCase):
     def test_question(self, mock_datetime, mock_time):
         """
         Test a bunch of scoreboard stuff.
-        This is the most precarious part of this code to be honest.
         """
         self._trivia._config['scoreboard_show_incorrect'] = True
         self._trivia._config['scoreboard_show_percent'] = True
         operations = (
-            ('setdate', (2000, 1, 2)),
-            ('wronganswer', 'a'),
-            ('q_no_post', None),
-            ('wronganswer', 'b'),
-            ('q_no_post', None),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 1}),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 1}),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 1}),
-            ('answer', 'b'),
-            ('q_post', {'uid': 'b', 'rank': 2}),
-            ('answer', 'b'),
-            ('q_post', {'uid': 'b', 'rank': 2}),
-            ('answer', 'c'),
-            ('q_post', {'uid': 'c', 'rank': 3}),
-            ('scoreboard_cmd', ('!today', 'Sunday January 02 2000', (
+            (ln(), 'setdate', (2000, 1, 2)),
+            (ln(), 'wronganswer', 'a'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'wronganswer', 'b'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 1}),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 1}),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 1}),
+            (ln(), 'answer', 'b'),
+            (ln(), 'q_post', {'uid': 'b', 'rank': 2}),
+            (ln(), 'answer', 'b'),
+            (ln(), 'q_post', {'uid': 'b', 'rank': 2}),
+            (ln(), 'answer', 'c'),
+            (ln(), 'q_post', {'uid': 'c', 'rank': 3}),
+            (ln(), 'scoreboard_cmd', ('!today', 'Sunday January 02 2000', (
                 ('a', 3, 0), # "a" gets it wrong then right so not in incorrect
                 ('b', 2, 1),
                 ('c', 1, 0),
             ))),
 
-            ('setdate', (2000, 1, 3)),
-            ('scoreboard_cmd', ('!yesterday', 'Sunday January 02 2000', (
+            (ln(), 'setdate', (2000, 1, 3)),
+            (ln(), 'scoreboard_cmd', ('!yesterday', 'Sunday January 02 2000', (
                 ('a', 3, 0),
                 ('b', 2, 1),
                 ('c', 1, 0),
             ))),
-            ('answer', 'b'),
-            ('q_post', {'uid': 'b', 'rank': 1}),
-            ('answer', 'b'),
-            ('q_post', {'uid': 'b', 'rank': 1}),
-            ('scoreboard_cmd', ('!week', 'week starting Sunday January 02 2000', (
+            (ln(), 'scoreboard', ({'days_ago': 2}, 'Saturday January 01 2000', (
+            ))),
+            (ln(), 'scoreboard', ({'days_ago': 2, 'suppress_no_scores': True}, 'Saturday January 01 2000', (
+            ))),
+            (ln(), 'scoreboard', ({'weeks_ago': 1}, 'week starting Sunday December 26 1999', (
+            ))),
+            (ln(), 'answer', 'b'),
+            (ln(), 'q_post', {'uid': 'b', 'rank': 1}),
+            (ln(), 'wronganswer', 'b'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'answer', 'b'),
+            (ln(), 'q_post', {'uid': 'b', 'rank': 1}),
+            (ln(), 'scoreboard_cmd', ('!week', 'week starting Sunday January 02 2000', (
                 ('b', 4, 1),
                 ('a', 3, 0),
                 ('c', 1, 0),
             ))),
-            ('scoreboard_cmd', ('!month', 'January 2000', (
+            (ln(), 'scoreboard_cmd', ('!month', 'January 2000', (
                 ('b', 4, 1),
                 ('a', 3, 0),
                 ('c', 1, 0),
             ))),
-            ('scoreboard_cmd', ('!year', '2000', (
+            (ln(), 'scoreboard_cmd', ('!year', '2000', (
                 ('b', 4, 1),
                 ('a', 3, 0),
                 ('c', 1, 0),
             ))),
-            ('scoreboard_cmd', ('!alltime', 'Alltime Scores', (
+            (ln(), 'scoreboard_cmd', ('!alltime', 'Alltime Scores', (
                 ('b', 4, 1),
                 ('a', 3, 0),
                 ('c', 1, 0),
             ))),
 
-            ('setdate', (2000, 2, 1)),
-            ('answer', 'c'),
-            ('answer', 'c'),
-            ('wronganswer', 'a'),
-            ('wronganswer', 'a'),
-            ('wronganswer', 'a'), # only count 1 wrong per question
-            ('answer', 'c'),
-            ('answer', 'c'),
-            ('wronganswer', 'c'),
-            ('answer', 'b'),
-            ('answer', 'b'),
-            ('wronganswer', 'c'),
-            ('answer', 'a'),
-            ('scoreboard_cmd', ('!today', 'Tuesday February 01 2000', (
+            (ln(), 'setdate', (2000, 2, 1)),
+            (ln(), 'answer', 'c'),
+            (ln(), 'answer', 'c'),
+            (ln(), 'wronganswer', 'a'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'wronganswer', 'a'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'wronganswer', 'a'), # only count 1 wrong per question
+            (ln(), 'q_no_post', None),
+            (ln(), 'answer', 'c'),
+            (ln(), 'answer', 'c'),
+            (ln(), 'wronganswer', 'c'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'answer', 'b'),
+            (ln(), 'answer', 'b'),
+            (ln(), 'wronganswer', 'c'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'answer', 'a'),
+            (ln(), 'scoreboard', ({'months_ago': 1}, 'January 2000', (
+                ('b', 4, 1),
+                ('a', 3, 0),
+                ('c', 1, 0),
+            ))),
+            (ln(), 'scoreboard_cmd', ('!today', 'Tuesday February 01 2000', (
                 ('c', 4, 2),
                 ('b', 2, 0),
                 ('a', 1, 1),
             ))),
-            ('scoreboard_cmd', ('!yesterday', 'Monday January 31 2000', (
+            (ln(), 'scoreboard_cmd', ('!yesterday', 'Monday January 31 2000', (
             ))),
-            ('scoreboard_cmd', ('!month', 'February 2000', (
+            (ln(), 'scoreboard_cmd', ('!month', 'February 2000', (
                 ('c', 4, 2),
                 ('b', 2, 0),
                 ('a', 1, 1),
             ))),
-            ('scoreboard_cmd', ('!alltime', 'Alltime Scores', (
+            (ln(), 'scoreboard_cmd', ('!alltime', 'Alltime Scores', (
                 ('b', 6, 1),
                 ('c', 5, 2),
                 ('a', 4, 1),
             ))),
-            ('answer', 'c'),
-            ('q_post', {'uid': 'c', 'rank': 1}),
-            ('answer', 'b'),
-            ('q_post', {'uid': 'b', 'rank': 2}),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 3}),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 2}),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 2}),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 1}),
-            ('answer', 'a'),
-            ('q_post', {'uid': 'a', 'rank': 1}),
-            ('answer', 'd'),
-            ('q_post', {'uid': 'd', 'rank': 4}),
-            ('scoreboard_cmd', ('!today', 'Tuesday February 01 2000', (
+            (ln(), 'answer', 'c'),
+            (ln(), 'q_post', {'uid': 'c', 'rank': 1}),
+            (ln(), 'answer', 'b'),
+            (ln(), 'q_post', {'uid': 'b', 'rank': 2}),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 3}),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 2}),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 2}),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 1}),
+            (ln(), 'answer', 'a'),
+            (ln(), 'q_post', {'uid': 'a', 'rank': 1}),
+            (ln(), 'answer', 'd'),
+            (ln(), 'q_post', {'uid': 'd', 'rank': 4}),
+            (ln(), 'scoreboard_cmd', ('!today', 'Tuesday February 01 2000', (
                 ('a', 6, 1),
                 ('c', 5, 2),
                 ('b', 3, 0),
@@ -361,62 +442,72 @@ class TestTriviaCore(unittest.TestCase):
 
 
 
-            ('setdate', (2001, 1, 1)),
-            ('wronganswer', 'z'),
-            ('answer', 'a'),
-            ('answer', 'a'),
-            ('answer', 'a'),
-            ('answer', 'b'),
-            ('answer', 'b'),
-            ('answer', 'c'),
-            ('scoreboard_cmd', ('!today', 'Monday January 01 2001', (
+            (ln(), 'setdate', (2001, 1, 1)),
+            (ln(), 'wronganswer', 'z'),
+            (ln(), 'q_no_post', None),
+            (ln(), 'answer', 'a'),
+            (ln(), 'answer', 'a'),
+            (ln(), 'answer', 'a'),
+            (ln(), 'answer', 'b'),
+            (ln(), 'answer', 'b'),
+            (ln(), 'answer', 'c'),
+            (ln(), 'scoreboard_cmd', ('!today', 'Monday January 01 2001', (
                 ('a', 3, 0),
                 ('b', 2, 0),
                 ('c', 1, 0),
                 ('z', 0, 1),
             ))),
-            ('scoreboard_cmd', ('!week', 'week starting Sunday December 31 2000', (
+            (ln(), 'scoreboard_cmd', ('!week', 'week starting Sunday December 31 2000', (
                 ('a', 3, 0),
                 ('b', 2, 0),
                 ('c', 1, 0),
                 ('z', 0, 1),
             ))),
-            ('scoreboard_cmd', ('!month', 'January 2001', (
+            (ln(), 'scoreboard_cmd', ('!month', 'January 2001', (
                 ('a', 3, 0),
                 ('b', 2, 0),
                 ('c', 1, 0),
                 ('z', 0, 1),
             ))),
-            ('scoreboard_cmd', ('!year', '2001', (
+            (ln(), 'scoreboard_cmd', ('!year', '2001', (
                 ('a', 3, 0),
                 ('b', 2, 0),
                 ('c', 1, 0),
                 ('z', 0, 1),
             ))),
-            ('scoreboard_cmd', ('!alltime', 'Alltime Scores', (
+            (ln(), 'scoreboard_cmd', ('!alltime', 'Alltime Scores', (
                 ('a', 12, 1),
                 ('b', 9, 1),
                 ('c', 7, 2),
                 ('d', 1, 0),
                 ('z', 0, 1),
             ))),
-            ('scoreboard', ({'days_ago': 0}, 'Monday January 01 2001', (
+            (ln(), 'scoreboard', ({'days_ago': 0}, 'Monday January 01 2001', (
                 ('a', 3, 0),
                 ('b', 2, 0),
                 ('c', 1, 0),
                 ('z', 0, 1),
             ))),
-            ('scoreboard', ({'weeks_ago': 1, 'suppress_no_scores': True}, 'week starting Sunday December 24 2000', (
+            (ln(), 'scoreboard', ({'weeks_ago': 1, 'suppress_no_scores': True}, 'week starting Sunday December 24 2000', (
             ))),
-            ('scoreboard', ({'weeks_ago': 1}, 'week starting Sunday December 24 2000', (
+            (ln(), 'scoreboard', ({'weeks_ago': 1}, 'week starting Sunday December 24 2000', (
             ))),
-            ('scoreboard', ({'years_ago': 1}, '2000', (
+            (ln(), 'scoreboard', ({'years_ago': 1}, '2000', (
                 ('a', 9, 1),
                 ('b', 7, 1),
                 ('c', 6, 2),
                 ('d', 1, 0),
             ))),
-        )
+            (ln(), 'scoreboard', ({'months_ago': 12}, 'January 2000', (
+                ('b', 4, 1),
+                ('a', 3, 0),
+                ('c', 1, 0),
+            ))),
+            (ln(), 'scoreboard', ({'months_ago': -12}, 'January 2002', (
+            ))),
+            (ln(), 'scoreboard', ({'months_ago': 120}, 'January 1991', (
+            ))),
+            )
         mock_ask_question = Mock()
         mock_post_reply = Mock()
         mock_post_message = Mock()
@@ -429,16 +520,18 @@ class TestTriviaCore(unittest.TestCase):
         mock_ask_question.reset_mock()
 
 
-        for op, dat in operations:
+        for line, op, dat in operations:
             if op == 'setdate':
                 dt = datetime(*dat, 12, 30)
                 mock_datetime.today.return_value = dt
                 mock_time.side_effect = range(int(dt.timestamp()),int(dt.timestamp()) + 10000)
 
             elif op == 'answer':
+                mock_ask_question.reset_mock()
                 self._trivia.handle_message(dat, 'answer', 'payload')
 
             elif op == 'wronganswer':
+                mock_ask_question.reset_mock()
                 self._trivia.handle_message(dat, 'qwerty', 'payload')
 
             elif op == 'q_post':
@@ -476,7 +569,7 @@ class TestTriviaCore(unittest.TestCase):
                     self.assertIn(scoreboard.split('\n')[0], (
                         f'Scoreboard for {date_str}',
                         date_str # Alltime Scores case
-                        ))
+                        ), f'line number {line}')
                     scores = self.parse_scoreboard(scoreboard)
                     self.assertEqual(len(scores), len(exp_scores))
                     for i, exp_score in enumerate(exp_scores):
@@ -487,7 +580,10 @@ class TestTriviaCore(unittest.TestCase):
                             str(exp_score[1]),
                             str(exp_score[2]),
                             str(exp_score[1] * 100 // (exp_score[1] + exp_score[2]))
-                            ])
+                            ], f'line number {line}')
+
+            else:
+                self.assertTrue(False, f'unrecognized op on line: {line}')
 
 if __name__ == '__main__':
     unittest.main()
