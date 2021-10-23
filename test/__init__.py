@@ -23,6 +23,21 @@ class TestTriviaCore(unittest.TestCase):
         }
 
         self._trivia = TriviaCore(**config, platform='test')
+        queries = {'test_add_categories': """
+                    INSERT INTO category (show_number, show_year, title, comment
+                    ) VALUES (
+                      1, 2000, 'This is a category', 'This is a category comment'
+                    )""",
+
+                    'test_add_questions': """
+                    INSERT INTO question (
+                      category_id, value, question, answer, non_text
+                    ) VALUES (
+                      (SELECT id FROM category LIMIT 1), 200, 'question', 'answer', 0
+                    )"""}
+
+        self._trivia._db._queries = {**self._trivia._db._queries, **queries}
+
         self._trivia._db.execute('test_add_categories', auto_commit=True)
         self._trivia._db.execute('test_add_questions', auto_commit=True)
 
@@ -232,10 +247,15 @@ class TestTriviaCore(unittest.TestCase):
     def test_question(self, mock_datetime, mock_time):
         """
         Test a bunch of scoreboard stuff.
+        This is the most precarious part of this code to be honest.
         """
+        self._trivia._config['scoreboard_show_incorrect'] = True
+        self._trivia._config['scoreboard_show_percent'] = True
         operations = (
             ('setdate', (2000, 1, 2)),
             ('wronganswer', 'a'),
+            ('q_no_post', None),
+            ('wronganswer', 'b'),
             ('q_no_post', None),
             ('answer', 'a'),
             ('q_post', {'uid': 'a', 'rank': 1}),
@@ -249,41 +269,152 @@ class TestTriviaCore(unittest.TestCase):
             ('q_post', {'uid': 'b', 'rank': 2}),
             ('answer', 'c'),
             ('q_post', {'uid': 'c', 'rank': 3}),
-            ('scoreboard', ('!today', 'Sunday January 02 2000', (
-                ('a', '3'),
-                ('b', '2'),
-                ('c', '1'),
+            ('scoreboard_cmd', ('!today', 'Sunday January 02 2000', (
+                ('a', 3, 0), # "a" gets it wrong then right so not in incorrect
+                ('b', 2, 1),
+                ('c', 1, 0),
             ))),
 
             ('setdate', (2000, 1, 3)),
-            ('scoreboard', ('!yesterday', 'Sunday January 02 2000', (
-                ('a', '3'),
-                ('b', '2'),
-                ('c', '1'),
+            ('scoreboard_cmd', ('!yesterday', 'Sunday January 02 2000', (
+                ('a', 3, 0),
+                ('b', 2, 1),
+                ('c', 1, 0),
             ))),
             ('answer', 'b'),
             ('q_post', {'uid': 'b', 'rank': 1}),
             ('answer', 'b'),
             ('q_post', {'uid': 'b', 'rank': 1}),
-            ('scoreboard', ('!week', 'week starting Sunday January 02 2000', (
-                ('b', '4'),
-                ('a', '3'),
-                ('c', '1'),
+            ('scoreboard_cmd', ('!week', 'week starting Sunday January 02 2000', (
+                ('b', 4, 1),
+                ('a', 3, 0),
+                ('c', 1, 0),
             ))),
-            ('scoreboard', ('!month', 'January 2000', (
-                ('b', '4'),
-                ('a', '3'),
-                ('c', '1'),
+            ('scoreboard_cmd', ('!month', 'January 2000', (
+                ('b', 4, 1),
+                ('a', 3, 0),
+                ('c', 1, 0),
             ))),
-            ('scoreboard', ('!year', '2000', (
-                ('b', '4'),
-                ('a', '3'),
-                ('c', '1'),
+            ('scoreboard_cmd', ('!year', '2000', (
+                ('b', 4, 1),
+                ('a', 3, 0),
+                ('c', 1, 0),
             ))),
-            ('scoreboard', ('!alltime', 'Alltime Scores', (
-                ('b', '4'),
-                ('a', '3'),
-                ('c', '1'),
+            ('scoreboard_cmd', ('!alltime', 'Alltime Scores', (
+                ('b', 4, 1),
+                ('a', 3, 0),
+                ('c', 1, 0),
+            ))),
+
+            ('setdate', (2000, 2, 1)),
+            ('answer', 'c'),
+            ('answer', 'c'),
+            ('wronganswer', 'a'),
+            ('wronganswer', 'a'),
+            ('wronganswer', 'a'), # only count 1 wrong per question
+            ('answer', 'c'),
+            ('answer', 'c'),
+            ('wronganswer', 'c'),
+            ('answer', 'b'),
+            ('answer', 'b'),
+            ('wronganswer', 'c'),
+            ('answer', 'a'),
+            ('scoreboard_cmd', ('!today', 'Tuesday February 01 2000', (
+                ('c', 4, 2),
+                ('b', 2, 0),
+                ('a', 1, 1),
+            ))),
+            ('scoreboard_cmd', ('!yesterday', 'Monday January 31 2000', (
+            ))),
+            ('scoreboard_cmd', ('!month', 'February 2000', (
+                ('c', 4, 2),
+                ('b', 2, 0),
+                ('a', 1, 1),
+            ))),
+            ('scoreboard_cmd', ('!alltime', 'Alltime Scores', (
+                ('b', 6, 1),
+                ('c', 5, 2),
+                ('a', 4, 1),
+            ))),
+            ('answer', 'c'),
+            ('q_post', {'uid': 'c', 'rank': 1}),
+            ('answer', 'b'),
+            ('q_post', {'uid': 'b', 'rank': 2}),
+            ('answer', 'a'),
+            ('q_post', {'uid': 'a', 'rank': 3}),
+            ('answer', 'a'),
+            ('q_post', {'uid': 'a', 'rank': 2}),
+            ('answer', 'a'),
+            ('q_post', {'uid': 'a', 'rank': 2}),
+            ('answer', 'a'),
+            ('q_post', {'uid': 'a', 'rank': 1}),
+            ('answer', 'a'),
+            ('q_post', {'uid': 'a', 'rank': 1}),
+            ('answer', 'd'),
+            ('q_post', {'uid': 'd', 'rank': 4}),
+            ('scoreboard_cmd', ('!today', 'Tuesday February 01 2000', (
+                ('a', 6, 1),
+                ('c', 5, 2),
+                ('b', 3, 0),
+                ('d', 1, 0),
+            ))),
+
+
+
+            ('setdate', (2001, 1, 1)),
+            ('wronganswer', 'z'),
+            ('answer', 'a'),
+            ('answer', 'a'),
+            ('answer', 'a'),
+            ('answer', 'b'),
+            ('answer', 'b'),
+            ('answer', 'c'),
+            ('scoreboard_cmd', ('!today', 'Monday January 01 2001', (
+                ('a', 3, 0),
+                ('b', 2, 0),
+                ('c', 1, 0),
+                ('z', 0, 1),
+            ))),
+            ('scoreboard_cmd', ('!week', 'week starting Sunday December 31 2000', (
+                ('a', 3, 0),
+                ('b', 2, 0),
+                ('c', 1, 0),
+                ('z', 0, 1),
+            ))),
+            ('scoreboard_cmd', ('!month', 'January 2001', (
+                ('a', 3, 0),
+                ('b', 2, 0),
+                ('c', 1, 0),
+                ('z', 0, 1),
+            ))),
+            ('scoreboard_cmd', ('!year', '2001', (
+                ('a', 3, 0),
+                ('b', 2, 0),
+                ('c', 1, 0),
+                ('z', 0, 1),
+            ))),
+            ('scoreboard_cmd', ('!alltime', 'Alltime Scores', (
+                ('a', 12, 1),
+                ('b', 9, 1),
+                ('c', 7, 2),
+                ('d', 1, 0),
+                ('z', 0, 1),
+            ))),
+            ('scoreboard', ({'days_ago': 0}, 'Monday January 01 2001', (
+                ('a', 3, 0),
+                ('b', 2, 0),
+                ('c', 1, 0),
+                ('z', 0, 1),
+            ))),
+            ('scoreboard', ({'weeks_ago': 1, 'suppress_no_scores': True}, 'week starting Sunday December 24 2000', (
+            ))),
+            ('scoreboard', ({'weeks_ago': 1}, 'week starting Sunday December 24 2000', (
+            ))),
+            ('scoreboard', ({'years_ago': 1}, '2000', (
+                ('a', 9, 1),
+                ('b', 7, 1),
+                ('c', 6, 2),
+                ('d', 1, 0),
             ))),
         )
         mock_ask_question = Mock()
@@ -303,31 +434,60 @@ class TestTriviaCore(unittest.TestCase):
                 dt = datetime(*dat, 12, 30)
                 mock_datetime.today.return_value = dt
                 mock_time.side_effect = range(int(dt.timestamp()),int(dt.timestamp()) + 10000)
+
             elif op == 'answer':
                 self._trivia.handle_message(dat, 'answer', 'payload')
+
             elif op == 'wronganswer':
                 self._trivia.handle_message(dat, 'qwerty', 'payload')
+
             elif op == 'q_post':
-                mock_ask_question.assert_called_with(self.question_template(**dat))
+                with self.subTest(f'Question asked with {str(dat)}'):
+                    mock_ask_question.assert_called_with(self.question_template(**dat))
+
             elif op == 'q_no_post':
-                mock_ask_question.assert_not_called()
-            elif op == 'scoreboard':
-                cmd, date_str, exp_scores = dat
-                self._trivia.handle_message('a', cmd, 'payload')
-                scoreboard = mock_post_reply.call_args[0][0]
-                self.assertIn(scoreboard.split('\n')[0], (
-                    f'Scoreboard for {date_str}',
-                    date_str # Alltime Scores case
-                    ))
-                scores = self.parse_scoreboard(scoreboard)
-                self.assertEqual(len(scores), len(exp_scores))
-                for i, exp_score in enumerate(exp_scores):
-                    self.assertEqual(scores[i], [
-                        str(i+1),
-                        exp_score[0],
-                        str(int(exp_score[1]) * 200),
-                        str(exp_score[1])
-                        ])
+                with self.subTest('Question not asked'):
+                    mock_ask_question.assert_not_called()
+
+            elif op in ('scoreboard_cmd', 'scoreboard'):
+                with self.subTest('Test scoreboard result'):
+                    cmd, date_str, exp_scores = dat
+
+                    mock_post_message.reset_mock()
+                    mock_post_reply.reset_mock()
+
+                    if op == 'scoreboard_cmd':
+                        self._trivia.handle_message('a', cmd, 'payload')
+
+                    else:
+                        self._trivia._show_scores(**cmd)
+
+                    if op == 'scoreboard' and cmd.get('suppress_no_scores', False) == True:
+                        mock_post_message.assert_not_called()
+                        mock_post_reply.assert_not_called()
+
+                        continue
+
+                    if op == 'scoreboard_cmd' or cmd.get('message_payload') is not None:
+                        scoreboard = mock_post_reply.call_args[0][0]
+                    else:
+                        scoreboard = mock_post_message.call_args[0][0]
+
+                    self.assertIn(scoreboard.split('\n')[0], (
+                        f'Scoreboard for {date_str}',
+                        date_str # Alltime Scores case
+                        ))
+                    scores = self.parse_scoreboard(scoreboard)
+                    self.assertEqual(len(scores), len(exp_scores))
+                    for i, exp_score in enumerate(exp_scores):
+                        self.assertEqual(scores[i], [
+                            str(i+1),
+                            exp_score[0],
+                            f'{int(exp_score[1]) * 200:,}',
+                            str(exp_score[1]),
+                            str(exp_score[2]),
+                            str(exp_score[1] * 100 // (exp_score[1] + exp_score[2]))
+                            ])
 
 if __name__ == '__main__':
     unittest.main()
