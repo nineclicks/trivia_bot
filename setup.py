@@ -4,6 +4,7 @@ setup(
   packages = [
     'trivia_core',
     ],
+  include_package_data=True,
   version = '0.1',
   license='',
   description = '',
