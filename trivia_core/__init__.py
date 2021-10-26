@@ -264,6 +264,8 @@ class TriviaCore:
             }, auto_commit=True)
 
     def _complete_question_round(self, winning_uid):
+        logging.info('Question winner player id: %s', winning_uid or 'none')
+
         for attempt_user in set(self._attempts):
             self._add_user(attempt_user)
             self._player_attempt(
@@ -272,9 +274,7 @@ class TriviaCore:
                     attempt_user == winning_uid
                     )
 
-        self._update_question_round_table(
-            correct_uid=winning_uid,
-        )
+        self._update_question_round_table()
 
         winning_user = None
 
@@ -365,19 +365,10 @@ class TriviaCore:
         for row in rows:
             yield row
 
-    def _update_question_round_table(self, correct_uid = None):
-        logging.info('Question winner player id: %s', correct_uid or 'none')
+    def _update_question_round_table(self):
         params = {
-            'player_id': None,
             'complete_time': int(time()),
         }
-        if correct_uid is not None:
-            player_id = self._db.select_one(
-                'get_player_id',
-                {'uid': correct_uid, 'platform': self._config.get('platform')},
-                as_map=True)['id']
-
-            params['player_id'] = player_id
 
         self._db.execute(
             'update_question_round',

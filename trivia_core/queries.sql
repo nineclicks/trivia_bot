@@ -33,8 +33,7 @@ CREATE TABLE IF NOT EXISTS question_round
      id                INTEGER NOT NULL PRIMARY KEY,
      question_id       INTEGER,
      time              INTEGER,
-     complete_time     INTEGER,
-     correct_player_id INTEGER
+     complete_time     INTEGER
   )
 
 --name: create_attempt_table
@@ -104,8 +103,7 @@ WHERE uid = :uid
 
 --name: update_question_round
 UPDATE question_round
-SET correct_player_id = :player_id,
-    complete_time = :complete_time
+SET complete_time = :complete_time
 WHERE time = (SELECT MAX(time) FROM question_round)
 
 --name: get_last_question
