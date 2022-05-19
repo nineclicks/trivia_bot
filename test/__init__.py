@@ -1,5 +1,4 @@
 import inspect
-import re
 import unittest
 import logging
 from time import time
@@ -68,6 +67,47 @@ class TestTriviaCore(unittest.TestCase):
     @staticmethod
     def parse_scoreboard(scoreboard_str:str):
         return [line.split() for line in scoreboard_str.strip().split('\n')[4:]]
+
+
+    @patch('trivia_core.time')
+    def test_new(self, mock_time):
+        mock_time.return_value = 0
+        mock_ask_question = Mock()
+        mock_post_reply = Mock()
+        mock_error = Mock()
+        self._trivia.on_post_question(mock_ask_question)
+        self._trivia.on_post_reply(mock_post_reply)
+        self._trivia.on_error(mock_error)
+
+        self._trivia.handle_message('a', '!new', 'payload')
+        mock_ask_question.assert_called()
+        mock_post_reply.assert_not_called()
+        mock_error.assert_not_called()
+
+        mock_ask_question.reset_mock()
+        mock_post_reply.reset_mock()
+        mock_error.reset_mock()
+
+        self._trivia._config['min_seconds_before_new'] = 120
+        mock_time.return_value = 100
+        self._trivia.handle_message('a', '!new', 'payload')
+        mock_ask_question.assert_not_called()
+        mock_post_reply.assert_not_called()
+        mock_error.assert_called()
+        _, error_kwargs = mock_error.call_args
+        self.assertIn('20 seconds', error_kwargs['text'])
+
+        mock_ask_question.reset_mock()
+        mock_post_reply.reset_mock()
+        mock_error.reset_mock()
+
+        mock_time.return_value = 120
+
+        self._trivia.handle_message('a', '!new', 'payload')
+        mock_ask_question.assert_called()
+        mock_post_reply.assert_not_called()
+        mock_error.assert_not_called()
+
 
     def test_scoreboard_schedule(self):
         """Test that the apscheduler scoreboard job is set

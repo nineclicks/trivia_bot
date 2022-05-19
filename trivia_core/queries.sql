@@ -180,3 +180,6 @@ FROM
 WHERE
    uid = :uid
    OR :uid IS NULL;
+
+--name: get_current_round_start_time
+SELECT MAX(time) FROM question_round;

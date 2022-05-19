@@ -46,10 +46,14 @@ class TriviaCore:
         self._pre_format_handler = lambda x: x
         self._get_display_name_handler = lambda x: x
         self._correct_answer_handler = lambda *_, **__: None
+        self._on_error_handler = lambda *_, **__: None
         self._db = TriviaDatabase(database_path)
         self._command_prefix = '!'
         self._current_question = self._get_last_question()
         self._create_scoreboard_schedule(kwargs['scoreboard_schedule'])
+
+    def error(self, message_payload, text):
+        self._on_error_handler(message_payload=message_payload, text=text)
 
     def handle_message(self, uid:str, text:str, message_payload):
         """
@@ -136,6 +140,19 @@ class TriviaCore:
         self._post_reply_handler = func
 
         return func
+
+    def on_error(self, func):
+        """Decorate your error handler function.
+
+        This function will be called when there is a problem with a command
+        Use the message_payload to know where to reply.
+
+        Decorated function shall accept arguments:
+            message_payload (any): Same message_payload passed in to handle_message()
+            text (str): The text of the error.
+        """
+
+        self._on_error_handler = func
 
     def on_get_display_name(self, func):
         """Decorate your get display name handler function.
@@ -263,6 +280,19 @@ class TriviaCore:
             'correct': int(correct)
             }, auto_commit=True)
 
+    def _command_next(self, message_payload):
+        start_time = self._db.select_one('get_current_round_start_time')[0]
+        round_age = int(time() - start_time)
+        min_seconds = self._config.get('min_seconds_before_new', 0)
+        seconds_left = min_seconds - round_age
+
+
+        if seconds_left > 0:
+            self.error(message_payload, f'Please wait {seconds_left} seconds to do that.')
+
+        else:
+            self._complete_question_round(None)
+
     def _complete_question_round(self, winning_uid):
         logging.info('Question winner player id: %s', winning_uid or 'none')
 
@@ -300,7 +330,7 @@ class TriviaCore:
             (
                 ['new', 'trivia new'],
                 'Skip to the next question',
-                lambda *_, **__: self._complete_question_round(winning_uid=None)
+                lambda *_, message_payload=None, **__: self._command_next(message_payload=message_payload)
             ),
             (
                 ['alltime', 'score', 'scores'],
