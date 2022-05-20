@@ -68,6 +68,32 @@ class TestTriviaCore(unittest.TestCase):
     def parse_scoreboard(scoreboard_str:str):
         return [line.split() for line in scoreboard_str.strip().split('\n')[4:]]
 
+    def test_disabled_commands(self):
+        mock_post_reply = Mock()
+        self._trivia.on_post_reply(mock_post_reply)
+
+        self._trivia.handle_message('a', '!alltime', 'payload')
+        mock_post_reply.assert_called()
+        mock_post_reply.reset_mock()
+
+        self._trivia._config['disabled_commands'] = ['alltime']
+        self._trivia.handle_message('a', '!alltime', 'payload')
+        mock_post_reply.assert_not_called()
+        mock_post_reply.reset_mock()
+
+        self._trivia.handle_message('a', '!scores', 'payload')
+        mock_post_reply.assert_not_called()
+        mock_post_reply.reset_mock()
+
+        self._trivia.handle_message('a', '!today', 'payload')
+        mock_post_reply.assert_called()
+        mock_post_reply.reset_mock()
+
+        self._trivia.handle_message('a', '!help', 'payload')
+        mock_post_reply.assert_called()
+        args, _ = mock_post_reply.call_args
+        self.assertNotIn('alltime', args[0])
+
 
     @patch('trivia_core.time')
     def test_new(self, mock_time):

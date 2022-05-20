@@ -316,7 +316,7 @@ class TriviaCore:
         self._new_question(winning_user)
 
     def _commands(self):
-        return (
+        commands = (
             (
                 ['exit'],
                 None, # Won't show in help message
@@ -368,6 +368,11 @@ class TriviaCore:
                 self._command_help
             ),
         )
+
+        disabled_commands = self._config.get('disabled_commands', [])
+        commands = [c for c in commands if not any(dc in c[0] for dc in disabled_commands)]
+
+        return commands
 
     def _add_user(self, uid):
         self._db.execute('add_player', {
